@@ -16,11 +16,19 @@ A Windows-native OBS Studio plugin that:
 - ONVIF stack: **minimal hand-rolled C++ client** — WS-Discovery + SOAP/HTTP + WS-Security digest. No gSOAP generated code.
 - UI: **native Qt widgets (Qt6)** — dock + Tools-menu settings dialog.
 - Platform: **Windows only** (OBS 30–32). Dev via **local source editing; builds via GitHub Actions** (no local compiler initially).
-- Manual HW support: Hikvision, Dahua/OEM, and non-PT/2D fixed devices (self-decl sensed as declined-PTZ). Imaging-page behavior is built to degrade gracefully when a camera reports no imaging/PTZ capabilities.
+- Network: **single LAN subnet only** — multicast WS-Discovery is the discovery mechanism; manual add-by-XAddr as a fallback when a vendor hides multicast. No multi-VLAN/IP-range scanning, no WAN/VPN discovery.
+- Fleet scale: **1–4 cameras** typical — serial-ish heartbeat polling is fine; no concurrency tuning needed.
+- Credentials: **shared default + per-camera override**; stored with OBS config obfuscation (acceptable, not DPAPI).
+- Source mapping: **auto-suggest by parsing the Media Source RTSP URL host/IP → camera, with user confirmation**. Multiple sources pointing at one camera are each mapped and tracked separately (main/sub streams across scenes).
+- Live-output policy: **when a camera is live during stream/record and its IP moves → ask the user** (dialog: Apply now / Defer / Ignore, with a "remember my choice" option). When no output is active, apply automatically without prompting.
+- PTZ inputs: **hotkeys + keyboard/focus buttons + joystick/gamepad analog velocity** (Win32/DirectInput, no third-party dep, mirroring obs-ptz's joystick support).
+- Imaging panel v1: render **everything `GetOptions` reports**, plus day/night + backlight where exposed, plus **video encoder settings** (bitrate/resolution/framerate/quality via Media service) — full camera-config panel.
+- Scene→preset: **fire on scene activate** only (no transition timing, no multi-preset sequences, no preview-state triggers).
+- Manual HW support: Hikvision, Dahua/OEM, and non-PT/2D fixed devices. UI degrades gracefully when a camera reports no imaging/PTZ capabilities.
 
 ## Non-goals (MVP)
 
-- macOS/Linux builds, custom source type, event/alarm integrations, recording uploading, HTTPS/Onvif conformance (Profile G/T), IR/auxiliary relays beyond what the Imaging service surfaces, querying analytics metadata.
+- macOS/Linux builds, custom source type, event/alarm integrations, recording uploading, HTTPS/Onvif conformance (Profile G/T), multi-VLAN/remote discovery, querying analytics metadata, PTZ "auto tracking"/follow subject.
 
 ---
 
@@ -65,8 +73,8 @@ A Windows-native OBS Studio plugin that:
 | `onvif/ws_discovery.{h,cpp}` | UDP socket on `239.255.255.250:3702` (SO_REUSEADDR + group join), send Probe, parse ProbeMatch/Hello/Bye; returns `DiscoveredDevice { xaddrs[], types[], scopes[], uuid, ttl }`. Background listener thread feeds `on_device_announced(xaddr)`. |
 | `onvif/soap_client.{h,cpp}` | HTTP POST of SOAP envelopes; fault parsing; timeouts; http (and https if trivial). |
 | `onvif/ws_security.{h,cpp}` | UsernameToken: nonce(rand)+created(ISO8601 UTC) + digest = Base64( SHA1( Base64Decode(nonce) ‖ created ‖ password ) ); exposes passwordText fallback for legacy devices. |
-| `onvif/onvif_client.{h,cpp}` | Typed calls: `GetDeviceInformation`, `GetCapabilities` (mediaXaddr/ptzXaddr/imagingXaddr), `GetProfiles`, `GetStreamUri(profileToken)`, `ContinuousMove`, `AbsoluteMove/RelativeMove`, `Stop`, `GetPresets/SetPreset/GotoPreset`, `GetNetworkInterfaces` (MAC). |
-| `onvif/imaging.{h,cpp}` | `GetImagingSettings`/`SetImagingSettings` (exposure mode + exposure time, iris, gain, white-balance mode/color/tint, brightness/sharpness where in dispatch/imaging scope, per `GetOptions`), `GetOptions` (valid ranges/enums for widget bounds), focus mode + one-touch refocus. |
+| `onvif/onvif_client.{h,cpp}` | Typed calls: `GetDeviceInformation`, `GetCapabilities` (mediaXaddr/ptzXaddr/imagingXaddr), `GetProfiles`, `GetStreamUri(profileToken)`, `ContinuousMove`, `AbsoluteMove/RelativeMove`, `Stop`, `GetPresets/SetPreset/GotoPreset`, `GetNetworkInterfaces` (MAC), `GetVideoEncoderConfigurations`/`SetVideoEncoderConfiguration` (bitrate/resolution/framerate/quality). |
+| `onvif/imaging.{h,cpp}` | `GetImagingSettings`/`SetImagingSettings` (exposure mode + exposure time, iris, gain, white-balance mode/color/tint, brightness/sharpness where in imaging scope), `GetOptions` (valid ranges/enums for widget bounds), focus mode + one-touch refocus. |
 | `onvif/capabilities.{h,cpp}` | Transform `GetCapabilities` into a per-camera `Capabilities { deviceXAddr, mediaXAddr, ptzXAddr, imagingXAddr, hasPTZ, hasImaging, hasEvent }` + cached `GetImagingOptions` ranges so the UI only renders real controls. |
 | `onvif/identity.{h,cpp}` | Stable fingerprint: serialNumber ▶ scopes `MAC` ▶ hardwareId ▶ Endpoint uuid. |
 | `onvif/xml.{h,cpp}` / `onvif/sha1.{h,cpp}` / `onvif/base64.{h,cpp}` | TinyXML2 (vendored, zlib), minimal SHA1, Base64 — no external deps. |
@@ -104,8 +112,10 @@ for each known camera C with fingerprint fp_C:
   2. `obs_data_set_string(settings, "input", newRTSP)`
   3. `obs_source_update(src, settings)` **and** call the `restart` proc via `obs_source_proc_handler` → this recreates the ffmpeg media on the new address. (Verify in Phase-3 that `update` alone restarts; use `restart` proc if not.)
   4. All libobs object/source operations dispatched via the obs UI/main thread (`obs_add_main_thread_callback`), never from the background registry thread.
-- **Scene→preset**: register `obs_frontend_add_event_callback`; on `OBS_FRONTEND_EVENT_SCENE_CHANGED` → scene config → fire `GotoPreset` for the bound camera. Settings dialog keeps the mapping table.
-- **Docks/UI**: the dock extrapolates from obs-ptz: camera dropdown + online LED, PTZ dot pad (velocity buttons, X-autosturn on press/release), zoom +/− , preset table (recall, save, rename, clear), "Set preset for current scene" button. Dock also has an **Image** tab: render controls (spinboxes, combos, checkboxes) for exposure mode / exposure time / gain / iris / white balance / focus, generated at runtime from the camera's cached `GetOptions` and only when the camera exposes them. Settings dialog tabs: Cameras, Sources, Scenes/Presets, Image defaults, Discovery, Log/About.
+- **Live-output policy**: when a moved camera is active during streaming/recording, marshal to the UI thread and show the **Apply prompt** (Apply now / Defer / Ignore + "remember my choice", persisted as `apply_policy`); otherwise apply automatically with no prompt.
+- **Scene→preset**: register `obs_frontend_add_event_callback`; on `OBS_FRONTEND_EVENT_SCENE_CHANGED` → scene config → fire `GotoPreset` for the bound camera, on scene-activate only. Settings dialog keeps the mapping table.
+- **Hotkeys + joystick**: assignable OBS hotkeys for presets/moves; joystick/gamepad analog velocity via Win32/DirectInput (no third-party dep).
+- **Docks/UI**: the dock extrapolates from obs-ptz: camera dropdown + online LED, PTZ dot pad (velocity buttons, stop-on-release), zoom +/−, focus, preset table (recall, save, rename, clear), "Set preset for current scene" button. Dock also has a **Config** panel: **Image** section (exposure, gain, iris, WB, focus, day-night/BLC where exposed, from `GetOptions`) and **Stream** section (bitrate/resolution/framerate/quality via Media service), widgets generated at runtime from cached capabilities. Settings dialog tabs: Cameras, Sources, Scenes, Config defaults, Discovery, Log/About.
 
 ## Concurrency & threading rules
 
@@ -119,16 +129,17 @@ for each known camera C with fingerprint fp_C:
 Camera {
   id: string                  // fingerprint
   name: string
-  username, password          // obfuscated
+  username, password          // obfuscated (shared-default + per-camera override)
   xaddr: string               // device service
   capabilities: { hasPTZ, hasImaging, media/profile tokens,
-                  imagingOptions (ranges/enums, cached) }
+                  imagingOptions (ranges/enums, cached),
+                  encoderConfigs (per profile) }
   lastKnownRTSP[profile]      // map<profileToken, rtsp url>
   online: bool, lastSeen
 }
 SourceMapping { source_name, camera_id, profileToken, auto_apply: bool }
 ScenePreset { scene_name, camera_id, preset_token }
-AppConfig { discovery_interval_s, hello_listener_enabled, apply_policy }
+AppConfig { discovery_interval_s, hello_listener_enabled, apply_policy(ask|always|defer) }
 ```
 
 ## Build & CI (Phase-0, Windows)
@@ -142,23 +153,22 @@ AppConfig { discovery_interval_s, hello_listener_enabled, apply_policy }
 
 | # | Timebox | Deliverable |
 |---|---|---|
-| 0 | Day 1–2 | Green no-op plugin on CI; installable zip; repo scaffolding; CRTDemo of deps |
-| 1 | ~1 wk | ONVIF core + tests vs mock server (discovery, digest auth, device/media/PTZ, capabilities + imaging) |
-| 2 | ~0.5 wk | Registry + persistence + identity matching + URL change detection |
-| 3 | ~1.5 wk | OBS integration: mapping, live updates + restart, scene → preset, dock (PTZ + Image tabs) + settings dialog |
-| 4 | Rolling | Hardening: multi-VLAN, DHCP-sack, Hikvision/Dahua quirks (incl. absent imaging options), packaging + README + user guide |
+| 0 | Day 1–2 | Green no-op plugin on CI; installable zip; repo scaffolding; verified deps |
+| 1 | ~1 wk | ONVIF core + tests vs mock server (discovery, digest auth, device/media/PTZ, capabilities + imaging + encoder) |
+| 2 | ~0.5 wk | Registry + persistence + identity matching + URL change detection + apply-policy state |
+| 3 | ~1.5 wk | OBS integration: mapping + confirmation, live updates + restart + output prompt, scene → preset, hotkeys, dock (PTZ + Config/Image/Stream) + settings dialog |
+| 4 | Rolling | Hardening: joystick/gamepad, day-night/BLC quirks, DHCP-sack, packaging + README + user guide |
 
 ## Test plan
 
-- Unit (`gtest`/CTest of core): digest math, XML parse of real probe responses, identity extraction, mapping `GetOptions` ranges → widget bounds for several profiles.
-- Mock server (python): Hikvision-grade + Dahua-grade + "IP changed" simulation (server re-binds on a host and sends Hello on the group; assert OBS source state via harness in CI) — CI verifies registry rewrites the URL, plus imaging `Get/SetImagingSettings` round-trips and an "imaging disabled" camera degrades to no Image widgets.
-- Manual HW checklist: discovery from multiple subnets, PTZ on Hikvision+Dahua, DHCP-leased camera that re-IPs, scene-preset firing, exposure/WB/focus adjustments on Hikvision+Dahua, streams that remain while rewrites happen vs documented glitch.
+- Unit (`gtest`/CTest of core): digest math, XML parse of real probe responses, identity extraction, mapping `GetOptions` ranges → widget bounds for several profiles, encoder config round-trips.
+- Mock server (python): Hikvision-grade + Dahua-grade + "IP changed" simulation (server re-binds on a host and sends Hello on the group; assert source state via harness in CI) — CI verifies registry rewrites the URL; imaging `Get/SetImagingSettings` round-trips; an "imaging disabled" camera degrades to no Image widgets; encoder `Set` round-trip; server emulates active-output so the Apply prompt path is exercised.
+- Manual HW checklist: discovery on the local subnet, PTZ on Hikvision+Dahua, DHCP-leased camera that re-IPs, scene-preset firing, exposure/WB/focus + encoder changes applied, joystick + hotkeys, streams that persist across a rewrite vs documented glitch.
 
 ## Open questions for later
 
 - Whether `input` change alone restarts ffmpeg_source in OBS 32 → verify against source; fallback to `restart` proc.
 - HTTPS ONVIF on devices that require it (mostly optional on Hikvision).
-- Which stream profile (main/sub) is auto-associated by default (user-selectable).
-- Apply policy default for "active output" scenarios (recommend: apply always, but surfaced in log + a toggle).
-- Imaging schema variance: some cameras omit `GetOptions` or nest exposure under Media2 — decide whether to mirror the classic Imaging model only, or also parse Media2 image-settings (MVP: classic Imaging only, Media2 is a follow-up).
-```
+- Which stream profile (main/sub) is auto-associated by default — now that multi-source config is possible, decide default + per-source override in Phase 3.
+- Imaging schema variance: some cameras omit `GetOptions` or nest exposure under Media2 — MVP uses classic Imaging model only; Media2 parsing is a follow-up.
+- Joystick with no axes exposed (button-only gamepads) — map as digital pushes or disable axis movement.
