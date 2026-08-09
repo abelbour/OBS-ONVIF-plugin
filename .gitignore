@@ -1,0 +1,35 @@
+# Build directories
+build/
+build-*/
+out/
+release/
+cmake-build-*/
+
+# Visual Studio / IDE
+.vs/
+*.user
+*.suo
+.vscode/
+.idea/
+
+# CMake / conan / vcpkg
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+_deps/
+vcpkg_installed/
+
+# Qt
+*.autosave
+
+# Testing / tooling
+*.log
+coverage/
+.cache/
+
+# macOS
+.DS_Store
+
+# Misc
+*.swp
+*~
