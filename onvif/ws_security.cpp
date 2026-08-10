@@ -1,3 +1,5 @@
+#define _CRT_RAND_S
+
 #include "ws_security.h"
 
 #include <array>
@@ -52,7 +54,8 @@ std::string PasswordDigest(const std::string &nonceBase64,
 			   const std::string &password)
 {
 	const std::string nonce = base64_decode(nonceBase64);
-	return base64_encode(sha1(nonce + created + password));
+	const SHA1Digest digest = sha1(nonce + created + password);
+	return base64_encode(digest.data(), digest.size());
 }
 
 namespace {

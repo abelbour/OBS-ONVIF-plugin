@@ -87,17 +87,17 @@ std::string Envelope(const std::string &header, const std::string &body,
 	for (const auto &ns : namespaces)
 		xmlns += " xmlns:" + ns.first + "=\"" + ns.second + "\"";
 
-	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-	       "<soap:Envelope xmlns:soap=\"" +
-	       soapNs + "\"" + xmlns +
-	       ">\n"
-	       "<soap:Header>" +
-	       header +
-	       "</soap:Header>\n"
-	       "<soap:Body>" +
-	       body +
-	       "</soap:Body>\n"
-	       "</soap:Envelope>";
+	std::string out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+		  "<soap:Envelope xmlns:soap=\"";
+	out += std::string(soapNs);
+	out += "\"";
+	out += xmlns;
+	out += ">\n<soap:Header>";
+	out += header;
+	out += "</soap:Header>\n<soap:Body>";
+	out += body;
+	out += "</soap:Body>\n</soap:Envelope>";
+	return out;
 }
 
 } // namespace xml
