@@ -23,8 +23,8 @@ at the failing run.
 ## Requirements
 
 - Windows 10+ (x64)
-- OBS Studio 32.x (Qt6). The vendored build pins OBS 31.1.1 deps for a
-  reproducible first green build; bumping to 32.x is tracked as a follow-up.
+- OBS Studio 32.x (Qt6). The vendored build pins OBS 32.2.1 deps (obs-studio
+  32.2.1 + obs-deps/Qt6 2026-07-15).
 - **Consumers of the public plugin ABI** link against `obs-onvif.h` (shipped in
   the release zip) and resolve `obs_onvif_get_abi` via `obs_get_module_symbol`.
 
