@@ -4,6 +4,7 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../third_party/tinyxml2"
 add_library(onvif_core STATIC
 	base64.cpp
 	identity.cpp
+	onvif_client.cpp
 	sha1.cpp
 	soap_client.cpp
 	ws_discovery.cpp

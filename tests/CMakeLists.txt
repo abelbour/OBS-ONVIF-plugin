@@ -42,4 +42,17 @@ if(BUILD_TESTING)
 				$<TARGET_FILE:ws_disc_live_test>
 		)
 	endif()
+
+	# Live typed-client round-trips against the mock (digest + basic/auth
+	# fallback).
+	if(Python3_FOUND)
+		add_executable(onvif_client_test unit/onvif_client_test.cpp)
+		target_link_libraries(onvif_client_test PRIVATE onvif_core)
+		add_test(
+			NAME client_live
+			COMMAND ${Python3_EXECUTABLE}
+				${CMAKE_CURRENT_SOURCE_DIR}/run_client_test.py
+				$<TARGET_FILE:onvif_client_test>
+		)
+	endif()
 endif()
