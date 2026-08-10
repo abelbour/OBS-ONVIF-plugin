@@ -58,7 +58,7 @@ jobs:
       - name: Run tests 🧪
         shell: pwsh
         run: |
-          ctest --test-dir build_x64 -C '${{ inputs.configuration || 'RelWithDebInfo' }}' --output-on-failure
+          ctest --test-dir build_x64 -C '${{ inputs.configuration || 'RelWithDebInfo' }}' --no-tests=error --output-on-failure
 
       - name: Package Plugin 📦
         shell: pwsh
