@@ -22,8 +22,14 @@ A Windows-native OBS Studio plugin that:
 - Source mapping: **auto-suggest by parsing the Media Source RTSP URL host/IP → camera, with user confirmation**. Multiple sources pointing at one camera are each mapped and tracked separately (main/sub streams across scenes).
 - Live-output policy: **when a camera is live during stream/record and its IP moves → ask the user** (dialog: Apply now / Defer / Ignore, with a "remember my choice" option). When no output is active, apply automatically without prompting.
 - PTZ inputs: **hotkeys + keyboard/focus buttons + joystick/gamepad analog velocity** (Win32/DirectInput, no third-party dep, mirroring obs-ptz's joystick support).
-- Imaging panel v1: render **everything `GetOptions` reports**, plus day/night + backlight where exposed, plus **video encoder settings** (bitrate/resolution/framerate/quality via Media service) — full camera-config panel.
+- Imaging panel v1: render **everything `GetOptions` reports**, plus day/night + backlight where exposed, plus **video encoder settings** (bitrate/resolution/framerate/quality via Media service) — full camera-config panel. Edits are applied via an **explicit Apply button** (batches one SetImagingSettings/SetEncoderConfig), never auto-sent per widget.
 - Scene→preset: **fire on scene activate** only (no transition timing, no multi-preset sequences, no preview-state triggers).
+- Reconnect behavior: **leave the camera alone** — after an IP change / power cycle we only repair the source URL; we never push settings or move the camera by ourselves.
+- Mapping storage: **per scene collection** — camera↔source and scene→preset bindings are namespaced by the active scene collection.
+- Stream default: when auto-pairing, pick the **highest-resolution profile (main)**; user can override per source.
+- URL auth: when rewriting an RTSP URL whose old value embedded `user:pass@`, **preserve those credentials** in the rewritten URL if `GetStreamUri` returns one without them.
+- Hotkeys: **pre-bind presets 1–9** (Ctrl+Alt+1..9); user can rebind in OBS → Settings → Hotkeys.
+- Distribution: **public repo, zip-only artifacts**, published to the OBS forum resources. **en-US only** locale (structure ready for later translation).
 - Manual HW support: Hikvision, Dahua/OEM, and non-PT/2D fixed devices. UI degrades gracefully when a camera reports no imaging/PTZ capabilities.
 
 ## Non-goals (MVP)
@@ -106,16 +112,16 @@ for each known camera C with fingerprint fp_C:
 
 ### OBS layer (Phase-3)
 
-- **Source mapping**: enumerate `obs_frontend_get_sources()`; a source is considered a camera source if it is an `ffmpeg_source` (`media source`) whose settings `input` parses as `rtsp://…`. Auto-suggest (and manual override) mapping camera ↔ source ↔ profile (main/sub). Persist mapping + `auto_apply_url` flag.
+- **Source mapping**: enumerate `obs_frontend_get_sources()`; a source is considered a camera source if it is an `ffmpeg_source` (`media source`) whose settings `input` parses as `rtsp://…`. Auto-suggest (and manual override) mapping camera ↔ source ↔ profile, defaulting to the **highest-resolution profile (main)**. Persist mapping + `auto_apply_url` flag, **namespaced per scene collection**.
 - **Applying a new URL**:
   1. `obs_source_get_settings(src)`
-  2. `obs_data_set_string(settings, "input", newRTSP)`
+  2. `obs_data_set_string(settings, "input", newRTSP)` — if the old URL had `user:pass@` and the new one doesn't, splice the old credentials into it.
   3. `obs_source_update(src, settings)` **and** call the `restart` proc via `obs_source_proc_handler` → this recreates the ffmpeg media on the new address. (Verify in Phase-3 that `update` alone restarts; use `restart` proc if not.)
   4. All libobs object/source operations dispatched via the obs UI/main thread (`obs_add_main_thread_callback`), never from the background registry thread.
 - **Live-output policy**: when a moved camera is active during streaming/recording, marshal to the UI thread and show the **Apply prompt** (Apply now / Defer / Ignore + "remember my choice", persisted as `apply_policy`); otherwise apply automatically with no prompt.
-- **Scene→preset**: register `obs_frontend_add_event_callback`; on `OBS_FRONTEND_EVENT_SCENE_CHANGED` → scene config → fire `GotoPreset` for the bound camera, on scene-activate only. Settings dialog keeps the mapping table.
-- **Hotkeys + joystick**: assignable OBS hotkeys for presets/moves; joystick/gamepad analog velocity via Win32/DirectInput (no third-party dep).
-- **Docks/UI**: the dock extrapolates from obs-ptz: camera dropdown + online LED, PTZ dot pad (velocity buttons, stop-on-release), zoom +/−, focus, preset table (recall, save, rename, clear), "Set preset for current scene" button. Dock also has a **Config** panel: **Image** section (exposure, gain, iris, WB, focus, day-night/BLC where exposed, from `GetOptions`) and **Stream** section (bitrate/resolution/framerate/quality via Media service), widgets generated at runtime from cached capabilities. Settings dialog tabs: Cameras, Sources, Scenes, Config defaults, Discovery, Log/About.
+- **Scene→preset**: register `obs_frontend_add_event_callback`; on `OBS_FRONTEND_EVENT_SCENE_CHANGED` → scene config → fire `GotoPreset` for the bound camera, on scene-activate only. Mapping table lives in the per-scene-collection config.
+- **Hotkeys + joystick**: OBS hotkeys **pre-bound to presets 1–9** (Ctrl+Alt+1..9) plus move keys; joystick/gamepad analog velocity via Win32/DirectInput (no third-party dep).
+- **Docks/UI**: the dock extrapolates from obs-ptz: camera dropdown + online LED, PTZ pad (velocity buttons, stop-on-release), zoom +/−, focus, preset table (recall, save, rename, clear), "Set preset for current scene" button. Dock also has a **Config** panel: **Image** section (exposure, gain, iris, WB, focus, day-night/BLC where exposed, from `GetOptions`) and **Stream** section (bitrate/resolution/framerate/quality via Media service), widgets generated at runtime from cached capabilities, with an **Apply** button that batches the SOAP set. Settings dialog tabs: Cameras, Sources, Scenes, Config defaults, Discovery, Log/About.
 
 ## Concurrency & threading rules
 
@@ -137,17 +143,23 @@ Camera {
   lastKnownRTSP[profile]      // map<profileToken, rtsp url>
   online: bool, lastSeen
 }
-SourceMapping { source_name, camera_id, profileToken, auto_apply: bool }
-ScenePreset { scene_name, camera_id, preset_token }
-AppConfig { discovery_interval_s, hello_listener_enabled, apply_policy(ask|always|defer) }
+// The following are namespaced per scene collection (a "collection" key):
+SourceMapping { collection, source_name, camera_id, profileToken, auto_apply: bool }
+ScenePreset   { collection, scene_name, camera_id, preset_token }
+AppConfig {
+  discovery_interval_s, hello_listener_enabled,
+  apply_policy(ask|always|defer),
+  default_stream(high|low),   // high by default
+  preset_hotkeys_prebound(true), restore_settings_on_reconnect(false)
+}
 ```
 
 ## Build & CI (Phase-0, Windows)
 
-- Repo with `obs-plugintemplate` as base (vendored or submodule). Azure/Actions `windows-2022` runner.
+- Repo: `abelbour/OBS-ONVIF-plugin` (public) — already initialized and pushed; Actions can run on it as-is.
+- Source scaffold from `obs-plugintemplate` (vendored or submodule). Actions `windows-2022` runner.
 - `obs-plugintemplate`'s `Build-Windows.ps1` pulls prebuilt OBS deps (versioned) → CMake/VS2022 → plugin zip (layout: `[win-x64]/obs-onvif/bin/64bit/*.dll`, data, locale) installed to `%APPDATA%\obs-studio\plugins`.
-- CI on push/PR: build + unit-test the ONVIF core against `mock_onvif_server.py` (a small Python HTTP+UDP mock emulating Hikvision+Dahua identity/PLZ quirks), then publish artifacts on tags.
-- **Requires a GitHub repo.** Next step: create `obs-onvif` repo, push, enable Actions for status:to validate toolchain.
+- CI on push/PR: build + unit-test the ONVIF core against `mock_onvif_server.py` (a small Python HTTP+UDP mock emulating Hikvision+Dahua identity/PLZ quirks); publish zip artifacts on tags for the **OBS forum resources page**.
 
 ### Milestones
 
@@ -163,12 +175,12 @@ AppConfig { discovery_interval_s, hello_listener_enabled, apply_policy(ask|alway
 
 - Unit (`gtest`/CTest of core): digest math, XML parse of real probe responses, identity extraction, mapping `GetOptions` ranges → widget bounds for several profiles, encoder config round-trips.
 - Mock server (python): Hikvision-grade + Dahua-grade + "IP changed" simulation (server re-binds on a host and sends Hello on the group; assert source state via harness in CI) — CI verifies registry rewrites the URL; imaging `Get/SetImagingSettings` round-trips; an "imaging disabled" camera degrades to no Image widgets; encoder `Set` round-trip; server emulates active-output so the Apply prompt path is exercised.
-- Manual HW checklist: discovery on the local subnet, PTZ on Hikvision+Dahua, DHCP-leased camera that re-IPs, scene-preset firing, exposure/WB/focus + encoder changes applied, joystick + hotkeys, streams that persist across a rewrite vs documented glitch.
+- Manual HW checklist: discovery on the local subnet, PTZ on Hikvision+Dahua, DHCP-leased camera that re-IPs, scene-preset firing, Apply-button image/encoder changes persisted on camera, pre-bound hotkeys 1–9, joystick, creds preserved through a URL rewrite, reconnect leaves camera untouched.
 
 ## Open questions for later
 
 - Whether `input` change alone restarts ffmpeg_source in OBS 32 → verify against source; fallback to `restart` proc.
 - HTTPS ONVIF on devices that require it (mostly optional on Hikvision).
-- Which stream profile (main/sub) is auto-associated by default — now that multi-source config is possible, decide default + per-source override in Phase 3.
 - Imaging schema variance: some cameras omit `GetOptions` or nest exposure under Media2 — MVP uses classic Imaging model only; Media2 parsing is a follow-up.
 - Joystick with no axes exposed (button-only gamepads) — map as digital pushes or disable axis movement.
+- Scene-collection rename/delete: how migrations handle stale `collection` keys (stale mappings get dropped with a log warning).
