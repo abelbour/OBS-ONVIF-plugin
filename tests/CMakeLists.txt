@@ -1,5 +1,3 @@
-include(CTest)
-
 if(BUILD_TESTING)
 	add_executable(onvif_smoke unit/smoke.cpp)
 
