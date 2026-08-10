@@ -54,6 +54,41 @@ std::string PasswordDigest(const std::string &nonceBase64,
 	return base64_encode(sha1(nonce + created + password));
 }
 
+namespace {
+
+const char *kWsseNs =
+	"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd";
+const char *kWsuNs =
+	"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd";
+
+} // namespace
+
+std::string SecurityHeader(const UsernameToken &t, bool digest)
+{
+	std::string out = "<wsse:Security xmlns:wsse=\"" + std::string(kWsseNs) +
+			  "\" xmlns:wsu=\"" + std::string(kWsuNs) + "\">"
+			  "<wsse:UsernameToken>"
+			  "<wsse:Username>" +
+			  t.username + "</wsse:Username>";
+	if (digest) {
+		out += "<wsse:Password Type=\"http://docs.oasis-open.org/wss/2004/01/"
+		       "oasis-200401-wss-username-token-profile-1.0#PasswordDigest\">" +
+		       t.passwordDigest + "</wsse:Password>";
+	} else {
+		out += "<wsse:Password Type=\"http://docs.oasis-open.org/wss/2004/01/"
+		       "oasis-200401-wss-username-token-profile-1.0#PasswordText\">" +
+		       t.passwordText + "</wsse:Password>";
+	}
+	out += "<wsse:Nonce EncodingType=\"http://docs.oasis-open.org/wss/2004/01/"
+	       "oasis-200401-wss-soap-message-security-1.0#Base64Binary\">" +
+	       t.nonceBase64 + "</wsse:Nonce>"
+	       "<wsu:Created>" +
+	       t.created + "</wsu:Created>"
+	       "</wsse:UsernameToken>"
+	       "</wsse:Security>";
+	return out;
+}
+
 UsernameToken BuildUsernameToken(const std::string &username,
 				 const std::string &password)
 {

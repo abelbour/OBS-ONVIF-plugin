@@ -21,6 +21,10 @@ struct UsernameToken {
 UsernameToken BuildUsernameToken(const std::string &username,
 				 const std::string &password);
 
+// Builds a `<wsse:Security>` header fragment embedding the token. `digest`
+// selects the PasswordDigest type URI; false selects the legacy PasswordText.
+std::string SecurityHeader(const UsernameToken &t, bool digest = true);
+
 // Builds a token from explicit inputs so tests can pin the digest math.
 UsernameToken BuildUsernameTokenFixed(const std::string &username,
 				      const std::string &password,

@@ -53,7 +53,24 @@ jobs:
       - name: Build Plugin 🧱
         shell: pwsh
         run: |
-          ./.github/scripts/Build-Windows.ps1 -Configuration '${{ inputs.configuration || 'RelWithDebInfo' }}'
+          $log = 'ci-build-log.txt'
+          $exitCode = 0
+          try {
+            & ./.github/scripts/Build-Windows.ps1 -Configuration '${{ inputs.configuration || 'RelWithDebInfo' }}' 2>&1 | Tee-Object -FilePath $log
+            if ($null -eq $LASTEXITCODE) { $exitCode = 0 } else { $exitCode = $LASTEXITCODE }
+          } catch {
+            "BUILD EXCEPTION: $_" | Tee-Object -FilePath $log -Append
+            $exitCode = 1
+          }
+          exit $exitCode
+
+      - name: Upload build log on failure 🪵
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ci-build-log.txt
+          if-no-files-found: ignore
 
       - name: Run tests 🧪
         shell: pwsh
@@ -118,6 +135,40 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               body
+            });
+
+  diag-log:
+    name: Publish build log 🔍
+    if: failure()
+    needs: windows-build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-log
+          path: ./log
+        continue-on-error: true
+      - name: Push log to ci-logs branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let content = 'NO LOG CAPTURED';
+            try {
+              content = fs.readFileSync('log/ci-build-log.txt', 'utf8').slice(-200000);
+            } catch (e) { /* keep the placeholder */ }
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: `ci-logs/${context.runId}.log`,
+              branch: 'ci-logs',
+              message: `build log for run ${context.runId}`,
+              content: Buffer.from(content).toString('base64')
             });
 
   release:
