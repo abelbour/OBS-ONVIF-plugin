@@ -69,13 +69,24 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: ci-build-log.txt
+          path: |
+            ci-build-log.txt
+            ci-test-log.txt
           if-no-files-found: ignore
 
       - name: Run tests 🧪
         shell: pwsh
         run: |
-          ctest --test-dir build_x64 -C '${{ inputs.configuration || 'RelWithDebInfo' }}' --no-tests=error --output-on-failure
+          $log = 'ci-test-log.txt'
+          $exitCode = 0
+          try {
+            ctest --test-dir build_x64 -C '${{ inputs.configuration || 'RelWithDebInfo' }}' --no-tests=error --output-on-failure 2>&1 | Tee-Object -FilePath $log
+            if ($null -eq $LASTEXITCODE) { $exitCode = 0 } else { $exitCode = $LASTEXITCODE }
+          } catch {
+            "TEST EXCEPTION: $_" | Tee-Object -FilePath $log -Append
+            $exitCode = 1
+          }
+          exit $exitCode
 
       - name: Package Plugin 📦
         shell: pwsh
@@ -159,14 +170,13 @@ jobs:
           git config user.name "obs-onvif-ci"
           git config user.email "obs-onvif-ci@users.noreply.github.com"
           mkdir -p ci-logs
-          if [ -f log/ci-build-log.txt ]; then
-            cp log/ci-build-log.txt "ci-logs/${{ github.run_id }}.log"
-          else
-            echo "NO LOG CAPTURED" > "ci-logs/${{ github.run_id }}.log"
-          fi
-          git add "ci-logs/${{ github.run_id }}.log"
+          n=0
+          if [ -f log/ci-build-log.txt ]; then cp log/ci-build-log.txt "ci-logs/build-${{ github.run_id }}.log"; n=1; fi
+          if [ -f log/ci-test-log.txt ]; then cp log/ci-test-log.txt "ci-logs/test-${{ github.run_id }}.log"; n=1; fi
+          if [ "$n" = "0" ]; then echo "NO LOG CAPTURED" > "ci-logs/run-${{ github.run_id }}.log"; fi
+          git add ci-logs
           if ! git diff --cached --quiet; then
-            git commit -m "build log for run ${{ github.run_id }}"
+            git commit -m "build/test logs for run ${{ github.run_id }}"
           fi
           git push origin HEAD:ci-logs --force
 
