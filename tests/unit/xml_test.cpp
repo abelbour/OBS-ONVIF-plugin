@@ -61,6 +61,22 @@ static void TestMalformed()
 	CHECK(!Parse("", doc));
 }
 
+// Splits whitespace-separated tokens (used to walk XAddrs/Scopes).
+static std::vector<std::string> Tokens(const std::string &s)
+{
+	std::vector<std::string> out;
+	size_t pos = 0;
+	while (pos <= s.size()) {
+		size_t next = s.find_first_of(" \t\r\n", pos);
+		if (next == std::string::npos)
+			next = s.size();
+		if (next > pos)
+			out.push_back(s.substr(pos, next - pos));
+		pos = next + 1;
+	}
+	return out;
+}
+
 static void TestProbeMatch()
 {
 	XMLDocument doc;
@@ -95,22 +111,6 @@ static void TestProbeMatch()
 	CHECK_EQ(addrs.size(), size_t(2));
 	CHECK_EQ(addrs[0], "http://192.168.1.64:80/onvif/device_service");
 	CHECK_EQ(addrs[1], "http://192.168.1.64:8899/onvif/device_service");
-}
-
-// Splits whitespace-separated tokens (used to walk XAddrs/Scopes).
-static std::vector<std::string> Tokens(const std::string &s)
-{
-	std::vector<std::string> out;
-	size_t pos = 0;
-	while (pos <= s.size()) {
-		size_t next = s.find_first_of(" \t\r\n", pos);
-		if (next == std::string::npos)
-			next = s.size();
-		if (next > pos)
-			out.push_back(s.substr(pos, next - pos));
-		pos = next + 1;
-	}
-	return out;
 }
 
 static void TestFault()
