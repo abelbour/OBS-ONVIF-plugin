@@ -69,7 +69,9 @@ private:
 	// SOAP fault. Returns the raw response body.
 	std::string PostOperation(const std::string &serviceUrl,
 				  const std::string &soapAction,
-				  const char *wsdlNs, const std::string &body);
+				  const char *opPrefix,
+				  const char *wsdlNs,
+				  const std::string &body);
 
 	std::string ServiceFor(const std::string &primary,
 			       const std::string &capsXAddr);
