@@ -7,7 +7,7 @@
 namespace obs_onvif {
 
 constexpr uint16_t kDiscoveryPort = 3702;
-const char *kDiscoveryGroup = "239.255.255.250";
+constexpr const char *kDiscoveryGroup = "239.255.255.250";
 
 struct DiscoveredDevice {
 	std::vector<std::string> xaddrs; // whitespace-split XAddrs
