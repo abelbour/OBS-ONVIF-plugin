@@ -137,7 +137,7 @@ intptr_t OpenUdpSocket(uint16_t bindPort, bool joinMulticast, bool reuseAddr)
 
 	if (joinMulticast) {
 		ip_mreq mreq{};
-		mreq.imr_multiaddr.s_addr = inet_addr(kDiscoveryGroup);
+		inet_pton(AF_INET, kDiscoveryGroup, &mreq.imr_multiaddr);
 		mreq.imr_interface.s_addr = htonl(INADDR_ANY);
 		if (setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
 			       (const char *)&mreq, sizeof mreq) == SOCKET_ERROR) {
