@@ -6,7 +6,9 @@ configuration, scene→preset actions, and DHCP IP-change auto-repair of Media
 Source URLs.
 
 > **Status: scaffolding (Milestone 0).** The repo builds a green no-op plugin on
-> Windows CI. Feature work is tracked in [`PLAN.md`](PLAN.md) (decisions) and
+> Windows CI and runs an OBS-free core smoke test under CTest (base64 primitive
+> bootstraps the `onvif/` core). Feature work is tracked in
+> [`PLAN.md`](PLAN.md) (decisions) and
 > [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) (build order + code).
 
 ## Build status
@@ -14,6 +16,7 @@ Source URLs.
 | Lane | Status |
 |---|---|
 | Build & package (Windows x64) | [![build](https://github.com/abelbour/OBS-ONVIF-plugin/actions/workflows/build.yml/badge.svg)](https://github.com/abelbour/OBS-ONVIF-plugin/actions/workflows/build.yml) |
+| Core tests (CTest, OBS-free) | `ctest --test-dir build_x64 -C <config> --output-on-failure` on every CI build |
 
 The workflow runs on every push to `main`, on pull requests, on manual
 `workflow_dispatch`, and once nightly (04:17 UTC) as a continuous dependency /

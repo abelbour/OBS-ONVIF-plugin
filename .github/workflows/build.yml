@@ -55,6 +55,11 @@ jobs:
         run: |
           ./.github/scripts/Build-Windows.ps1 -Configuration '${{ inputs.configuration || 'RelWithDebInfo' }}'
 
+      - name: Run tests 🧪
+        shell: pwsh
+        run: |
+          ctest --test-dir build_x64 -C '${{ inputs.configuration || 'RelWithDebInfo' }}' --output-on-failure
+
       - name: Package Plugin 📦
         shell: pwsh
         run: |
