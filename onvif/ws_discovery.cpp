@@ -57,6 +57,28 @@ int FamilyForHost(const std::string &host)
 	return AF_INET;
 }
 
+// Device entries nested in the SOAP Body: ProbeMatch lives under a
+// ProbeMatches wrapper; Hello/Bye sit directly under Body.
+std::vector<const tinyxml2::XMLElement *>
+EntryElements(const tinyxml2::XMLElement *body)
+{
+	std::vector<const tinyxml2::XMLElement *> entries;
+	const tinyxml2::XMLElement *matches = xml::Child(body, "ProbeMatches");
+	if (matches) {
+		for (const tinyxml2::XMLElement *el :
+		     xml::Children(matches, "ProbeMatch"))
+			entries.push_back(el);
+		return entries;
+	}
+	for (const char *name : {"Hello", "Bye"}) {
+		if (const tinyxml2::XMLElement *el = xml::Child(body, name)) {
+			entries.push_back(el);
+			return entries;
+		}
+	}
+	return entries;
+}
+
 } // namespace
 
 std::string BuildProbe(const std::string &messageId)
@@ -103,20 +125,18 @@ bool ParseDiscoveryResponse(const std::string &xml,
 		return false;
 
 	bool found = false;
-	for (const char *entry : {"ProbeMatch", "Hello", "Bye"}) {
-		for (const tinyxml2::XMLElement *el : xml::Children(body, entry)) {
-			DiscoveredDevice dev;
-			dev.relatesTo = relatesTo;
-			dev.xaddrs = SplitTokens(xml::ChildText(el, "XAddrs"));
-			for (const std::string &t :
-			     SplitTokens(xml::ChildText(el, "Types"))) {
-				dev.types.push_back(LocalTypeName(t));
-			}
-			dev.scopes = xml::ChildText(el, "Scopes");
-			dev.uuid = xml::ChildText(el, "Address");
-			out.push_back(std::move(dev));
-			found = true;
+	for (const tinyxml2::XMLElement *el : EntryElements(body)) {
+		DiscoveredDevice dev;
+		dev.relatesTo = relatesTo;
+		dev.xaddrs = SplitTokens(xml::ChildText(el, "XAddrs"));
+		for (const std::string &t :
+		     SplitTokens(xml::ChildText(el, "Types"))) {
+			dev.types.push_back(LocalTypeName(t));
 		}
+		dev.scopes = xml::ChildText(el, "Scopes");
+		dev.uuid = xml::ChildText(el, "Address");
+		out.push_back(std::move(dev));
+		found = true;
 	}
 	return found;
 }

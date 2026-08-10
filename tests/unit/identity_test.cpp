@@ -32,7 +32,7 @@ static void TestFingerprintPriority()
 	CHECK_EQ(BuildFingerprint(id), std::string());
 
 	id.uuid = "urn:uuid:abc";
-	CHECK_EQ(BuildFingerprint(id), std::string("uuid:abc"));
+	CHECK_EQ(BuildFingerprint(id), std::string("uuid:urn:uuid:abc"));
 
 	id.hardwareId = "HW-1";
 	CHECK_EQ(BuildFingerprint(id), std::string("hw:HW-1"));
