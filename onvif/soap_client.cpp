@@ -207,11 +207,12 @@ bool SoapClient::Send(const SoapRequest &req, SoapResult &out)
 	WinHttpAddRequestHeaders(hRequest, soapAction.c_str(), -1L,
 				 WINHTTP_ADDREQ_FLAG_REPLACE);
 
-	if (!req.basicCred.empty()) {
-		const std::wstring auth =
-			L"Authorization: Basic " + ToWide(req.basicCred);
-		WinHttpAddRequestHeaders(hRequest, auth.c_str(), -1L,
-					 WINHTTP_ADDREQ_FLAG_REPLACE);
+	if (!req.basicUser.empty()) {
+		WinHttpSetCredentials(
+			hRequest, WINHTTP_AUTH_TARGET_SERVER,
+			WINHTTP_AUTH_SCHEME_BASIC,
+			ToWide(req.basicUser).c_str(), ToWide(req.basicPass).c_str(),
+			nullptr);
 	}
 
 	const DWORD bodyLen = (DWORD)req.body.size();

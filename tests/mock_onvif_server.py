@@ -185,7 +185,9 @@ class OnvifMock:
 
 
 class OnvifHandler(http.server.BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+    # HTTP/1.0 closes each connection, so the client (WinHTTP) does not hold
+    # the socket open and the handler never sees ConnectionResetError noise.
+    protocol_version = "HTTP/1.0"
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length", 0))

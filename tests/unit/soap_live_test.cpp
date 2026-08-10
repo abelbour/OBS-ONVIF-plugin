@@ -77,9 +77,6 @@ int main(int argc, char **argv)
 	const std::string user = argv[3];
 	const std::string pass = argv[4];
 
-	const std::string basicCred =
-		obs_onvif::base64_encode(user + ":" + pass);
-
 	if (mode == "digest" || mode == "digest_invalid") {
 		SoapRequest a;
 		a.url = url;
@@ -87,7 +84,8 @@ int main(int argc, char **argv)
 		a.soapAction = kSoapAction;
 		SoapRequest b = a;
 		b.body = PlainEnvelope();
-		b.basicCred = basicCred;
+		b.basicUser = user;
+		b.basicPass = pass;
 
 		SoapResult r;
 		CHECK(obs_onvif::SoapClient().SendWithAuthFallback(a, b, r));
@@ -106,7 +104,8 @@ int main(int argc, char **argv)
 		req.url = url;
 		req.body = PlainEnvelope();
 		req.soapAction = kSoapAction;
-		req.basicCred = basicCred;
+		req.basicUser = user;
+		req.basicPass = pass;
 
 		const RoundTrip rt = Run(req);
 		CHECK(rt.ok);
@@ -122,7 +121,8 @@ int main(int argc, char **argv)
 		a.soapAction = kSoapAction;
 		SoapRequest b = a;
 		b.body = PlainEnvelope();
-		b.basicCred = basicCred;
+		b.basicUser = user;
+		b.basicPass = pass;
 
 		SoapResult r;
 		CHECK(obs_onvif::SoapClient().SendWithAuthFallback(a, b, r));

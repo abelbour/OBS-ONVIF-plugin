@@ -12,8 +12,8 @@ struct SoapRequest {
 	std::string body;     // complete SOAP envelope (wsse Security included
 			      // when the caller uses WS-Security auth)
 	std::string soapAction; // SOAPAction value (empty => `SOAPAction: ""`)
-	std::string basicCred;  // base64("user:pass"); non-empty => add an
-				// `Authorization: Basic` header
+	std::string basicUser;  // HTTP Basic auth, supplied to WinHTTP via
+	std::string basicPass;  // WinHttpSetCredentials (not raw headers)
 	bool validateCert = false; // https: reject unknown/self-signed/expired
 				   // certs when true
 	unsigned timeoutMs = 5000;
