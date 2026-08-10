@@ -16,6 +16,7 @@ import base64
 import hashlib
 import http.server
 import re
+import socket
 import socketserver
 import ssl
 import sys
@@ -211,6 +212,47 @@ class OnvifServer(socketserver.ThreadingTCPServer):
     def __init__(self, addr, mock):
         self.mock = mock
         super().__init__(addr, OnvifHandler)
+
+
+PROBE_MATCH_REPLY = """<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
+               xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+               xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"
+               xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
+  <soap:Header>
+    <wsa:MessageID>urn:uuid:0d8c9f97-8b2f-4a1b-8b5f-6f9b2d0a1e3c</wsa:MessageID>
+    <wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</wsa:Action>
+  </soap:Header>
+  <soap:Body>
+    <d:ProbeMatches>
+      <d:ProbeMatch>
+        <wsa:Address>urn:uuid:bd43994a-1e5f-4e8a-9fc5-2e8b1c3d5f7a</wsa:Address>
+        <d:Types>dn:NetworkVideoTransmitter d:Device</d:Types>
+        <d:Scopes>onvif://www.onvif.org/name/DS-2CD2032-I onvif://www.onvif.org/hardware/DS-2CD2032-I onvif://www.onvif.org/mac/40:d8:2e:12:34:56 onvif://www.onvif.org/type/video_encoder</d:Scopes>
+        <d:XAddrs>http://127.0.0.1/onvif/device_service</d:XAddrs>
+        <d:MetadataVersion>1</d:MetadataVersion>
+      </d:ProbeMatch>
+    </d:ProbeMatches>
+  </soap:Body>
+</soap:Envelope>"""
+
+
+def udp_echo_reply(reply_payload, port, timeout=15.0, justify_probe=None):
+    """Listens on 127.0.0.1:port, replies to ONE discovery datagram with
+    `reply_payload`. Immediately returns the raw probe datagram received, so a
+    caller can assert on it (or pass `justify_probe` to have that asserted
+    here). Raises/signals failure via the exception on timeout."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", port))
+    s.settimeout(timeout)
+    try:
+        data, addr = s.recvfrom(65535)
+        if justify_probe is not None:
+            assert justify_probe in data, "probe did not contain expected text"
+        s.sendto(reply_payload.encode("utf-8"), addr)
+        return data
+    finally:
+        s.close()
 
 
 def make_server(mock, host="127.0.0.1", port=0, https=False,

@@ -4,6 +4,8 @@ if(BUILD_TESTING)
 		unit/sha1_test.cpp
 		unit/ws_security_test.cpp
 		unit/xml_test.cpp
+		unit/ws_discovery_test.cpp
+		unit/identity_test.cpp
 	)
 
 	foreach(_test IN LISTS ONVIF_TESTS)
@@ -27,5 +29,17 @@ if(BUILD_TESTING)
 		)
 	else()
 		message(WARNING "Python3 interpreter not found; skipping soap_live network tests")
+	endif()
+
+	# Live UDP discovery round-trip against the mock's echo responder.
+	if(Python3_FOUND)
+		add_executable(ws_disc_live_test unit/ws_discovery_test.cpp)
+		target_link_libraries(ws_disc_live_test PRIVATE onvif_core)
+		add_test(
+			NAME discovery_live
+			COMMAND ${Python3_EXECUTABLE}
+				${CMAKE_CURRENT_SOURCE_DIR}/run_discovery_test.py
+				$<TARGET_FILE:ws_disc_live_test>
+		)
 	endif()
 endif()
