@@ -21,8 +21,9 @@ std::string CreatedNow()
 	GetSystemTime(&st);
 	char buf[32];
 	std::snprintf(buf, sizeof buf, "%04u-%02u-%02uT%02u:%02u:%02uZ",
-		      st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute,
-		      st.wSecond);
+		      (unsigned)st.wYear, (unsigned)st.wMonth, (unsigned)st.wDay,
+		      (unsigned)st.wHour, (unsigned)st.wMinute,
+		      (unsigned)st.wSecond);
 	return buf;
 }
 
