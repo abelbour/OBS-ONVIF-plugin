@@ -79,6 +79,13 @@ typedef struct obs_cast_abi_s {
 
 OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void);
 
+/* Configures the ABI backend for an OBS install: `config_dir` is the module
+ * config directory (camera + collection persistence root) and `collection` is
+ * the active scene-collection UUID/name used for per-collection state.
+ * Optional — the ABI works with defaults (""/empty) for out-of-process use. */
+OBS_ONVIF_API void obs_onvif_abi_init(const char *config_dir,
+				      const char *collection);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

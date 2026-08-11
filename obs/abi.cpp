@@ -416,3 +416,13 @@ extern "C" OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void)
 	};
 	return &abi;
 }
+
+extern "C" OBS_ONVIF_API void obs_onvif_abi_init(const char *config_dir,
+						 const char *collection)
+{
+	std::lock_guard<std::mutex> lock(Guard());
+	Backend &b = GetBackend();
+	b.store = Store(config_dir ? config_dir : "");
+	if (collection && *collection)
+		b.collection = collection;
+}
