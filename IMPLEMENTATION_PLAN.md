@@ -459,6 +459,12 @@ struct AppConfig {
     std::string default_stream = "high";    // high | low
     bool preset_hotkeys_prebound = true;
     bool restore_settings_on_reconnect = false;
+    // PTZ transport/motor control (M4, §6.8) — all default-on:
+    bool soap_keepalive = true;            // reuse WinHTTP connection across calls
+    bool ptz_auth_cache = true;            // cache negotiated auth mode per camera
+    int ptz_move_timeout_s = 0;            // 0 = omit Timeout (move until Stop)
+    std::string ptz_stop_mode = "immediate"; // immediate (abort) | queued
+    int ptz_min_interval_ms = 75;          // hard minimum between movement requests
 };
 ```
 
@@ -731,7 +737,7 @@ void OnPresetHotkey(void *data, obs_hotkey_id id, obs_hotkey_t *key, bool presse
 }
 ```
 
-Move hotkeys (W/A/S/D + spheres) are registered identically.
+Move hotkeys (W/A/S/D + spheres) are registered identically. **M4:** move/stop hotkeys (and the dock pad) route through `registry::PtzController` — single in-flight, latest-wins coalescing, Stop purge+priority, min interval — instead of fire-and-forget ABI calls (§6.8).
 
 ### 6.6 Public plugin ABI — `obs/obs-onvif.h` + `obs/abi.{h,cpp}`
 
@@ -798,9 +804,32 @@ OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void);
 
 Qt6 widgets built under `obs/`. Dock = camera dropdown + LED, PTZ pad (velocity buttons, stop-on-release), zoom/focus, preset table, "Set preset for current scene", Config panel with Image/Stream/OSD/Network tabs (all widget ranges from cached `GetOptions`; single Apply button batches the SOAP set). Settings dialog tabs: Cameras / Sources / Scenes / Config defaults / Discovery / Log / About.
 
-> **M3c/M3f implemented:** the control dock currently ships six tabs — **Cameras** (name / online / XAddr snapshot), **Source Mapping** (RTSP Media Sources in the scene tree ↔ camera assignment + auto-apply, persisted through `Store.SaveCollection` per collection and re-seeded into the apply policy), **Presets** (list / save / go-to / rename / delete on worker threads + "set preset for current scene" via `set_binding`/`clear_binding`), **PTZ** (velocity pad that re-issues `move` while a button is held and `stop` on release), **Config** (Image brightness/saturation/contrast/sharpness, Stream resolution/fps/bitrate from cached options, Network DHCP or static IPv4, OSD text overlay; one Apply batches the SOAP sets on a worker thread, with "unsupported" labels when a service is absent), and **Apply Policy** (default policy persisted to `config.json`, remembered per-camera overrides replayed). A **Settings** dialog (General / Discovery / Log / About) is reachable from the Apply Policy tab; its General+Discovery tabs edit the persisted `AppConfig` (default stream quality, apply-prompt timeout, discovery interval, SOAP/probe timeouts, Hello-listener toggle), the Log tab shows the OBS session-log tail, and About shows version + config paths.
+> **M3c/M3f implemented:** the control dock currently ships six tabs — **Cameras** (name / online / XAddr snapshot), **Source Mapping** (RTSP Media Sources in the scene tree ↔ camera assignment + auto-apply, persisted through `Store.SaveCollection` per collection and re-seeded into the apply policy), **Presets** (list / save / go-to / rename / delete on worker threads + "set preset for current scene" via `set_binding`/`clear_binding`), **PTZ** (velocity pad that re-issues `move` while a button is held and `stop` on release), **Config** (Image brightness/saturation/contrast/sharpness, Stream resolution/fps/bitrate from cached options, Network DHCP or static IPv4, OSD text overlay; one Apply batches the SOAP sets on a worker thread, with "unsupported" labels when a service is absent), and **Apply Policy** (default policy persisted to `config.json`, remembered per-camera overrides replayed). A **Settings** dialog (General / Discovery / Log / About) is reachable from the Apply Policy tab; its General+Discovery tabs edit the persisted `AppConfig` (default stream quality, apply-prompt timeout, discovery interval, SOAP/probe timeouts, Hello-listener toggle), the Log tab shows the OBS session-log tail, and About shows version + config paths. **M4:** the PTZ pad drops its 300 ms re-fire loop for a single press→`move` / release→`stop` routed through `registry::PtzController` (§6.8), and the Settings dialog gains a PTZ tab for the transport/motor-control knobs.
 
 ---
+
+### 6.8 PTZ command transport & motor control — `onvif/soap_client.{h,cpp}`, `registry/worker.{h,cpp}`, `registry/ptz_controller.{h,cpp}`, `obs/{dock,hotkeys,settings_dialog}.{h,cpp}` (M4)
+
+Background and governing decisions in PLAN.md §PTZ command transport & motor control. Implements the mitigations for the **PTZ move/stop path only**:
+
+- **Connection pool + keep-alive** (`soap_client`): cache `WinHttpConnect` handles keyed by `(scheme, host, port)` and reuse them across SOAP calls (`Connection: keep-alive`, HTTP/1.1); closed on `Shutdown`. Gated by `AppConfig::soap_keepalive` (off ⇒ per-call connection, today's behavior). The response-read loop must handle HTTP/1.1 chunked/keep-alive semantics.
+- **Auth-mode cache** (`soap_client`): per-camera `{wsse, basic}` remembered from the first successful exchange; subsequent requests send the accepted mode first (no 401→retry on Basic-only cameras). Gated by `AppConfig::ptz_auth_cache`. WS-Security tokens remain freshly generated per request (client nonce+created — no reusable server nonce).
+- **Profile/service cache** (`worker`): cache the camera's first `MediaProfile` (video-source/encoder/PTZ tokens) + resolved service URLs after `GetCapabilities`; `FirstProfile*`/config ops read the cache and refresh on SOAP error or TTL. Removes the 2 RTTs + 2 connections per command today's re-resolution costs.
+- **Template bodies + void-op skip** (`onvif_client`): `ContinuousMove`/`Stop` bodies built by `snprintf`-style fixed-buffer injection (velocity values only); void-op responses skip TinyXML2 body parsing (transport/fault handled by the HTTP layer).
+- **`registry::PtzController`** (OBS-free, unit-testable): a single worker thread owns PTZ SOAP dispatch —
+  - queue depth 1; a move arriving while one is in-flight only updates `pending_vector` (latest wins, intermediates discarded);
+  - `Stop` purges `pending_vector` and dispatches before any queued move;
+  - hard minimum interval (`ptz_min_interval_ms`) between dispatches;
+  - `ptz_move_timeout_s`: 0 ⇒ `ContinuousMove` without `Timeout` (until Stop); >0 ⇒ bounded timeout with throttled re-fire while a control is held;
+  - `ptz_stop_mode`: `immediate` (default) aborts the in-flight WinHTTP request and dispatches `Stop` on a fresh connection; `queued` waits for the current in-flight then dispatches `Stop`.
+  The ABI `move`/`stop`, the dock pad, and the move hotkeys all route through it.
+- **Dock/hotkey rework**: `PtzWidget` fires `controller.Move` on press and `controller.Stop` on release (no 300 ms loop); move hotkeys call the controller (coalesced).
+- **Settings → PTZ tab**: the five user-facing knobs (`soap_keepalive`, `ptz_auth_cache`, `ptz_move_timeout_s`, `ptz_stop_mode`, `ptz_min_interval_ms`) persisted via `Store::SaveAppConfig`.
+- **Mock + CI** (`ptz_latency_live`): upgrade `mock_onvif_server.py` to HTTP/1.1 keep-alive (parse `Content-Length`, keep the connection open; the handler currently forces HTTP/1.0 connection-close) and add a per-connection request counter. Assertions:
+  1. a `move` costs exactly **1 HTTP request** after first contact (profile+service cached, no 401 retry on an auth-cached camera);
+  2. **≥2 requests reuse one connection** when keep-alive is on;
+  3. with a move artificially delayed in-flight, `Stop` dispatches within ~1 RTT of release (`immediate` mode);
+  4. the mock never observes **overlapping movement requests** (queue depth ≤ 1).
 
 ## 7. Milestone 4 — hardening + packaging
 
@@ -809,6 +838,10 @@ Qt6 widgets built under `obs/`. Dock = camera dropdown + LED, PTZ pad (velocity 
 - ABI consumer field test: a small real consumer (or a staging build of Advanced Scene Switcher behavior) covering move/stop, full preset lifecycle, and scene-binding set/clear.
 - Packaging: zip artifacts with `data/locale/en-US.ini`, ABI header, README, user guide; publish to OBS forum resources.
 - GPLv3: add the required license text + attribution for ODM (GPLv2) and any vendored MIT headers (nlohmann, TinyXML2 zlib).
+- **PTZ transport mitigations** (§6.8): WinHTTP connection pool + keep-alive, auth-mode cache, profile/service cache, `snprintf` template bodies, void-op response skip — user-facing knobs in Settings → PTZ.
+- **PTZ motor control** (§6.8): `registry::PtzController` single-in-flight + latest-wins coalescing + Stop purge/priority + min interval; state-driven press→move / release→stop in dock + hotkeys; `ptz_stop_mode` immediate-abort vs queued.
+- **PTZ latency/overshoot CI** (§6.8): HTTP/1.1 keep-alive mock + request counting; `ptz_latency_live` asserts 1-request moves, connection reuse, prompt Stop, and queue depth ≤ 1.
+- **Manual latency/overshoot field check**: on Hikvision + Dahua over a throttled/WAN link, verify command-to-motion latency and absence of overshoot after Stop.
 
 ---
 

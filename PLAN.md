@@ -185,6 +185,52 @@ for each known camera C with fingerprint fp_C:
 - ONVIF worker runs independent discovery/session threads; pushes results to UI via Qt signal/slot queued crossings; results passed by value (never shared pointers) to avoid data races.
 - UDP socket member of a dedicated discovery gather thread; `Hello` listener socket bound once (SO_REUSEADDR) so it doesn't fight with other apps doing discovery.
 
+## PTZ command transport & motor control (M4)
+
+High command latency on WAN/loaded links and motor overshooting come from
+per-command round-trips (fresh TCP/TLS handshake + capability/profile
+re-resolution + optional 401→Basic retry per call) and from flooding the
+camera's embedded command queue. Mitigations are **default-on and
+user-configurable** (Settings → PTZ tab) and apply to the **PTZ move/stop
+command path only**:
+
+- **Profile/service caching** (internal, always-on): after first contact, cache
+  the camera's first `MediaProfile` (video-source/encoder/PTZ tokens) and the
+  resolved device/media/ptz/imaging/display service URLs; refresh on SOAP error
+  or TTL. This removes the 2 RTTs + 2 fresh connections per command that
+  capability+profile re-resolution currently costs — the dominant latency lever.
+- **HTTP keep-alive / connection reuse** (`soap_keepalive`): reuse a WinHTTP
+  connection keyed by (scheme, host, port) across SOAP calls instead of a fresh
+  TCP/TLS handshake per request. Off ⇒ legacy per-call connection.
+- **Auth-mode cache** (`ptz_auth_cache`): WS-Security UsernameToken stays
+  per-request (a fresh client nonce+created is mandatory for replay protection —
+  WS-Security has no reusable server nonce; HTTP Digest is out of scope). Cache
+  which mode a camera accepted (WS-Security vs Basic fallback) so Basic-only
+  cameras stop paying a 401→retry round trip on every command.
+- **State-driven ContinuousMove** (internal): one `ContinuousMove` on press,
+  one `Stop` on release — no per-tick re-fire. `ptz_move_timeout_s` controls
+  motion lifetime: `0` omits Timeout (move until Stop), `>0` is a bounded
+  timeout with throttled re-fire while held.
+- **PTZ command controller** (internal): queue depth 1, latest pending vector
+  wins (intermediate vectors discarded), `Stop` purges the queue and dispatches
+  ahead of any pending move, and a hard minimum interval (`ptz_min_interval_ms`)
+  prevents flooding the camera's request queue.
+- **Stop mode** (`ptz_stop_mode`): `immediate` (default) aborts the in-flight
+  movement request and dispatches `Stop` on a fresh connection; `queued` purges
+  pending and dispatches `Stop` once the current in-flight resolves (~1 RTT
+  worst case). "Instant" is bounded by one network RTT either way.
+- **Template request bodies + void-op response skip** (internal): PTZ move/stop
+  bodies are template-injected into a fixed buffer (no XML DOM generation; the
+  code already builds requests by string concat — make it `snprintf`-based);
+  void-op responses skip TinyXML2 parsing (transport/fault already handled by
+  the HTTP layer).
+- **Non-blocking dispatch** (internal): a single controller thread owns all PTZ
+  SOAP; the UI thread only records intent and never blocks on the network.
+
+All five user-facing knobs live in `AppConfig` (see Data model) and the
+Settings → PTZ tab; profile cache, template bodies, single in-flight and
+non-blocking dispatch are internal and always-on.
+
 ## Data model
 
 ```
@@ -210,7 +256,13 @@ AppConfig {
   soap_timeout_s(5), soap_retry_media(once), discovery_probe_timeout_s(3),
   apply_policy(ask|always|ignore), prompt_timeout_s(30),
   default_stream(high|low),   // high by default
-  preset_hotkeys_prebound(true), restore_settings_on_reconnect(false)
+  preset_hotkeys_prebound(true), restore_settings_on_reconnect(false),
+  // PTZ transport/motor control (M4) — all default-on:
+  soap_keepalive(true),           // reuse WinHTTP connection across SOAP calls
+  ptz_auth_cache(true),           // cache negotiated auth mode per camera
+  ptz_move_timeout_s(0),          // 0 = omit Timeout (move until Stop)
+  ptz_stop_mode("immediate"),     // immediate (abort in-flight) | queued
+  ptz_min_interval_ms(75)         // hard minimum between movement requests
 }
 ```
 
