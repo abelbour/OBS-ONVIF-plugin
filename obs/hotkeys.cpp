@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <obs-module.h>
@@ -41,10 +42,11 @@ bool FirstOnlineCameraId(std::string &out)
 	return ok;
 }
 
-/* Runs `fn` on a worker thread (the ABI PTZ calls perform blocking SOAP). */
-void FireAsync(void (*fn)(obs_cast_abi_t *))
+/* Runs `fn` on a worker thread (the ABI PTZ calls perform blocking SOAP).
+ * Templated so lambdas with captures can be forwarded to the worker thread. */
+template <typename Fn> void FireAsync(Fn &&fn)
 {
-	std::thread([fn]() {
+	std::thread([fn = std::forward<Fn>(fn)]() {
 		obs_cast_abi_t *abi = obs_onvif_get_abi();
 		if (!abi)
 			return;

@@ -67,7 +67,7 @@ void FireGoto(const Binding &b)
 
 void ScenePresets::OnSceneChanged()
 {
-	OBSSourceAutoRelease scene = obs_frontend_get_current_scene();
+	obs_source_t *scene = obs_frontend_get_current_scene();
 	if (!scene)
 		return;
 
@@ -75,6 +75,7 @@ void ScenePresets::OnSceneChanged()
 	if (FindBindingForScene(obs_source_get_name(scene), b) &&
 	    !b.camera_id.empty())
 		FireGoto(b);
+	obs_source_release(scene);
 }
 
 } // namespace obs_onvif::glue
