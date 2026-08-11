@@ -24,6 +24,25 @@ bool RunWithClient(obs_onvif::OnvifClient &client, Fn &&fn,
 	}
 }
 
+// Resolves the camera's first MediaProfile (video-source + encoder tokens).
+bool ResolveProfile(obs_onvif::OnvifClient &client,
+		    obs_onvif::MediaProfile &out, std::string &err)
+{
+	try {
+		client.GetCapabilities();
+		const auto profiles = client.GetProfiles();
+		if (profiles.empty()) {
+			err = "camera exposes no media profiles";
+			return false;
+		}
+		out = profiles.front();
+		return true;
+	} catch (const std::exception &e) {
+		err = e.what();
+		return false;
+	}
+}
+
 } // namespace
 
 Worker::Worker(std::function<CameraCreds(const std::string &)> creds)
@@ -54,19 +73,18 @@ obs_onvif::OnvifClient Worker::BuildClient(const Camera &cam) const
 bool Worker::FirstProfileToken(obs_onvif::OnvifClient &client,
 			       std::string &token, std::string &err)
 {
-	try {
-		client.GetCapabilities();
-		const auto profiles = client.GetProfiles();
-		if (profiles.empty()) {
-			err = "camera exposes no media profiles";
-			return false;
-		}
-		token = profiles.front().token;
-		return true;
-	} catch (const std::exception &e) {
-		err = e.what();
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
 		return false;
-	}
+	token = profile.token;
+	return true;
+}
+
+bool Worker::FirstProfile(const Camera &cam, obs_onvif::MediaProfile &out,
+			  std::string &err)
+{
+	auto client = BuildClient(cam);
+	return ResolveProfile(client, out, err);
 }
 
 bool Worker::Move(const Camera &cam, double pan, double tilt, double zoom,
@@ -177,6 +195,151 @@ bool Worker::CurrentPresetToken(const std::string &cameraId,
 		return false;
 	tokenOut = it->second;
 	return true;
+}
+
+bool Worker::EncoderConfig(const Camera &cam,
+			   obs_onvif::VideoEncoderConfig &out,
+			   std::string &err)
+{
+	auto client = BuildClient(cam);
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
+		return false;
+	try {
+		const auto configs = client.GetVideoEncoderConfigurations();
+		for (const auto &cfg : configs) {
+			if (cfg.token == profile.videoEncoderToken) {
+				out = cfg;
+				return true;
+			}
+		}
+		err = "profile's encoder configuration not found";
+		return false;
+	} catch (const std::exception &e) {
+		err = e.what();
+		return false;
+	}
+}
+
+bool Worker::EncoderOptions(const Camera &cam,
+			    obs_onvif::VideoEncoderOptions &out,
+			    std::string &err)
+{
+	auto client = BuildClient(cam);
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		out = c.GetVideoEncoderConfigurationOptions(
+			profile.videoEncoderToken);
+	}, err);
+}
+
+bool Worker::SetEncoderConfig(const Camera &cam,
+			      const obs_onvif::VideoEncoderConfig &cfg,
+			      std::string &err)
+{
+	auto client = BuildClient(cam);
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
+		return false;
+	obs_onvif::VideoEncoderConfig toSet = cfg;
+	toSet.token = profile.videoEncoderToken; // always target the profile's
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.SetVideoEncoderConfiguration(toSet);
+	}, err);
+}
+
+bool Worker::ImagingSettings(const Camera &cam,
+			     obs_onvif::ImagingSettings &out,
+			     std::string &err)
+{
+	auto client = BuildClient(cam);
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		out = c.GetImagingSettings(profile.videoSourceToken);
+	}, err);
+}
+
+bool Worker::ImagingOptions(const Camera &cam,
+			    obs_onvif::ImagingOptions &out,
+			    std::string &err)
+{
+	auto client = BuildClient(cam);
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		out = c.GetImagingOptions(profile.videoSourceToken);
+	}, err);
+}
+
+bool Worker::SetImagingSettings(const Camera &cam,
+				const obs_onvif::ImagingSettings &s,
+				std::string &err)
+{
+	auto client = BuildClient(cam);
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.SetImagingSettings(profile.videoSourceToken, s);
+	}, err);
+}
+
+bool Worker::NetworkInterfaces(const Camera &cam,
+			       std::vector<obs_onvif::NetworkInterfaceInfo> &out,
+			       std::string &err)
+{
+	auto client = BuildClient(cam);
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		out = c.GetNetworkInterfaces();
+	}, err);
+}
+
+bool Worker::SetNetworkInterface(const Camera &cam,
+				 const obs_onvif::NetworkInterfaceInfo &ni,
+				 std::string &err)
+{
+	auto client = BuildClient(cam);
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.SetNetworkInterface(ni);
+	}, err);
+}
+
+bool Worker::OSDs(const Camera &cam,
+		  std::vector<obs_onvif::OSDConfig> &out, std::string &err)
+{
+	auto client = BuildClient(cam);
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		out = c.GetOSDs(profile.videoSourceToken);
+	}, err);
+}
+
+bool Worker::SetOSD(const Camera &cam, const obs_onvif::OSDConfig &cfg,
+		    std::string &err)
+{
+	auto client = BuildClient(cam);
+	obs_onvif::OSDConfig toSet = cfg;
+	if (toSet.token.empty())
+		toSet.token = "osd1"; // device may reassign; kept stable here
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.SetOSD(toSet);
+	}, err);
+}
+
+bool Worker::DeleteOSD(const Camera &cam, const std::string &osdToken,
+		       std::string &err)
+{
+	auto client = BuildClient(cam);
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.DeleteOSD(osdToken);
+	}, err);
 }
 
 } // namespace obs_onvif::registry

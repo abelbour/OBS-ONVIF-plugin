@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "camera.h"
+#include "onvif_client.h"
 
 namespace obs_onvif {
 class OnvifClient;
@@ -57,6 +58,39 @@ public:
 	// Last preset token saved/recalled per camera (ABI get_current_preset).
 	bool CurrentPresetToken(const std::string &cameraId,
 				std::string &tokenOut) const;
+
+	// Camera configuration (config-panel backend). All resolve the camera's
+	// first profile internally and build a fresh client per call.
+	// FirstProfile resolves the camera's first MediaProfile (video-source +
+	// encoder tokens); the config ops use it to target the right elements.
+	bool FirstProfile(const Camera &cam, obs_onvif::MediaProfile &out,
+			  std::string &err);
+	bool EncoderConfig(const Camera &cam, obs_onvif::VideoEncoderConfig &out,
+			   std::string &err);
+	bool EncoderOptions(const Camera &cam, obs_onvif::VideoEncoderOptions &out,
+			   std::string &err);
+	bool SetEncoderConfig(const Camera &cam,
+			     const obs_onvif::VideoEncoderConfig &cfg,
+			     std::string &err);
+	bool ImagingSettings(const Camera &cam, obs_onvif::ImagingSettings &out,
+			    std::string &err);
+	bool ImagingOptions(const Camera &cam, obs_onvif::ImagingOptions &out,
+			    std::string &err);
+	bool SetImagingSettings(const Camera &cam,
+				const obs_onvif::ImagingSettings &s,
+				std::string &err);
+	bool NetworkInterfaces(const Camera &cam,
+			      std::vector<obs_onvif::NetworkInterfaceInfo> &out,
+			      std::string &err);
+	bool SetNetworkInterface(const Camera &cam,
+				const obs_onvif::NetworkInterfaceInfo &ni,
+				std::string &err);
+	bool OSDs(const Camera &cam,
+		  std::vector<obs_onvif::OSDConfig> &out, std::string &err);
+	bool SetOSD(const Camera &cam, const obs_onvif::OSDConfig &cfg,
+		    std::string &err);
+	bool DeleteOSD(const Camera &cam, const std::string &osdToken,
+		       std::string &err);
 
 private:
 	// Creates the ONVIF client for `cam` using the resolved credentials.

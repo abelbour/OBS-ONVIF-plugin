@@ -83,6 +83,11 @@ void CopyToken(char *out, size_t cap, const std::string &token)
 	out[n] = '\0';
 }
 
+void CopyStr(char *out, size_t cap, const std::string &s)
+{
+	CopyToken(out, cap, s);
+}
+
 } // namespace
 
 void Initialize(const std::string &configDir, CameraProvider cams,
@@ -394,6 +399,259 @@ int AClearBinding(const char *scene_name)
 
 } // namespace
 
+// camera configuration -------------------------------------------------------
+
+int AGetEncoderConfig(const char *cam, obs_cast_encoder_config_t *out)
+{
+	if (!out)
+		return -1;
+	std::memset(out, 0, sizeof *out);
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		obs_onvif::VideoEncoderConfig cfg;
+		std::string err;
+		if (!w.EncoderConfig(c, cfg, err))
+			return -3;
+		CopyStr(out->token, sizeof out->token, cfg.token);
+		CopyStr(out->name, sizeof out->name, cfg.name);
+		CopyStr(out->encoding, sizeof out->encoding, cfg.encoding);
+		out->width = cfg.resolution.width;
+		out->height = cfg.resolution.height;
+		out->frame_rate = cfg.frameRate;
+		out->bitrate = cfg.bitrate;
+		return 0;
+	});
+}
+
+int AGetEncoderOptions(const char *cam, obs_cast_encoder_options_t *out)
+{
+	if (!out)
+		return -1;
+	std::memset(out, 0, sizeof *out);
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		obs_onvif::VideoEncoderOptions o;
+		std::string err;
+		if (!w.EncoderOptions(c, o, err))
+			return -3;
+		out->min_frame_rate = o.minFrameRate;
+		out->max_frame_rate = o.maxFrameRate;
+		out->min_bitrate = o.minBitrate;
+		out->max_bitrate = o.maxBitrate;
+		out->resolution_count = (int)std::min<size_t>(
+			o.resolutions.size(), 16);
+		for (int i = 0; i < out->resolution_count; ++i) {
+			out->resolutions[i].width = o.resolutions[i].width;
+			out->resolutions[i].height = o.resolutions[i].height;
+		}
+		return 0;
+	});
+}
+
+int ASetEncoderConfig(const char *cam, const obs_cast_encoder_config_t *cfg)
+{
+	if (!cfg)
+		return -1;
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		obs_onvif::VideoEncoderConfig v;
+		v.token = cfg->token;
+		v.name = cfg->name;
+		v.encoding = cfg->encoding;
+		v.resolution.width = cfg->width;
+		v.resolution.height = cfg->height;
+		v.frameRate = cfg->frame_rate;
+		v.bitrate = cfg->bitrate;
+		std::string err;
+		if (!w.SetEncoderConfig(c, v, err))
+			return -3;
+		return 0;
+	});
+}
+
+int AGetImagingSettings(const char *cam, obs_cast_imaging_settings_t *out)
+{
+	if (!out)
+		return -1;
+	std::memset(out, 0, sizeof *out);
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		obs_onvif::ImagingSettings s;
+		std::string err;
+		if (!w.ImagingSettings(c, s, err))
+			return -3;
+		out->present = s.present ? 1 : 0;
+		out->brightness = s.brightness;
+		out->color_saturation = s.colorSaturation;
+		out->contrast = s.contrast;
+		out->sharpness = s.sharpness;
+		return 0;
+	});
+}
+
+int AGetImagingOptions(const char *cam, obs_cast_imaging_options_t *out)
+{
+	if (!out)
+		return -1;
+	std::memset(out, 0, sizeof *out);
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		obs_onvif::ImagingOptions o;
+		std::string err;
+		if (!w.ImagingOptions(c, o, err))
+			return -3;
+		out->present = o.present ? 1 : 0;
+		out->min_brightness = o.minBrightness;
+		out->max_brightness = o.maxBrightness;
+		out->min_color_saturation = o.minColorSaturation;
+		out->max_color_saturation = o.maxColorSaturation;
+		out->min_contrast = o.minContrast;
+		out->max_contrast = o.maxContrast;
+		out->min_sharpness = o.minSharpness;
+		out->max_sharpness = o.maxSharpness;
+		return 0;
+	});
+}
+
+int ASetImagingSettings(const char *cam,
+			const obs_cast_imaging_settings_t *settings)
+{
+	if (!settings)
+		return -1;
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		obs_onvif::ImagingSettings s;
+		s.present = true;
+		s.brightness = settings->brightness;
+		s.colorSaturation = settings->color_saturation;
+		s.contrast = settings->contrast;
+		s.sharpness = settings->sharpness;
+		std::string err;
+		if (!w.SetImagingSettings(c, s, err))
+			return -3;
+		return 0;
+	});
+}
+
+int AGetNetworkInterfaces(const char *cam,
+			  obs_cast_network_interface_t **out, int *count)
+{
+	*out = nullptr;
+	*count = 0;
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		std::vector<obs_onvif::NetworkInterfaceInfo> nis;
+		std::string err;
+		if (!w.NetworkInterfaces(c, nis, err))
+			return -3;
+		const size_t n = nis.size();
+		auto *arr = (obs_cast_network_interface_t *)calloc(
+			n ? n : 1, sizeof *arr);
+		if (!arr)
+			return -3;
+		for (size_t i = 0; i < n; ++i) {
+			CopyStr(arr[i].token, sizeof arr[i].token, nis[i].token);
+			CopyStr(arr[i].name, sizeof arr[i].name, nis[i].name);
+			CopyStr(arr[i].address, sizeof arr[i].address,
+				nis[i].address);
+			arr[i].enabled = nis[i].enabled ? 1 : 0;
+			arr[i].dhcp = nis[i].dhcp ? 1 : 0;
+			arr[i].prefix_length = nis[i].prefixLength;
+		}
+		*out = arr;
+		*count = (int)n;
+		return 0;
+	});
+}
+
+void AReleaseNetworkInterfaces(obs_cast_network_interface_t *out, int count)
+{
+	(void)count;
+	free(out);
+}
+
+int ASetNetworkInterface(const char *cam,
+			 const obs_cast_network_interface_t *ni)
+{
+	if (!ni)
+		return -1;
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		obs_onvif::NetworkInterfaceInfo n;
+		n.token = ni->token;
+		n.name = ni->name;
+		n.address = ni->address;
+		n.enabled = ni->enabled != 0;
+		n.dhcp = ni->dhcp != 0;
+		n.prefixLength = ni->prefix_length;
+		std::string err;
+		if (!w.SetNetworkInterface(c, n, err))
+			return -3;
+		return 0;
+	});
+}
+
+int AGetOSDs(const char *cam, obs_cast_osd_config_t **out, int *count)
+{
+	*out = nullptr;
+	*count = 0;
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		std::vector<obs_onvif::OSDConfig> osds;
+		std::string err;
+		if (!w.OSDs(c, osds, err))
+			return -3;
+		const size_t n = osds.size();
+		auto *arr = (obs_cast_osd_config_t *)calloc(n ? n : 1, sizeof *arr);
+		if (!arr)
+			return -3;
+		for (size_t i = 0; i < n; ++i) {
+			CopyStr(arr[i].token, sizeof arr[i].token, osds[i].token);
+			CopyStr(arr[i].text, sizeof arr[i].text, osds[i].text);
+			arr[i].enabled = osds[i].enabled ? 1 : 0;
+		}
+		*out = arr;
+		*count = (int)n;
+		return 0;
+	});
+}
+
+void AReleaseOSDs(obs_cast_osd_config_t *out, int count)
+{
+	(void)count;
+	free(out);
+}
+
+int ASetOSD(const char *cam, const obs_cast_osd_config_t *osd)
+{
+	if (!osd)
+		return -1;
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		obs_onvif::OSDConfig o;
+		o.token = osd->token;
+		o.text = osd->text;
+		o.enabled = osd->enabled != 0;
+		std::string err;
+		if (!w.SetOSD(c, o, err))
+			return -3;
+		return 0;
+	});
+}
+
+int ADeleteOSD(const char *cam, const char *osd_token)
+{
+	if (!osd_token || !*osd_token)
+		return -1;
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		std::string err;
+		if (!w.DeleteOSD(c, osd_token, err))
+			return -3;
+		return 0;
+	});
+}
+
 extern "C" OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void)
 {
 	static obs_cast_abi_t abi = {
@@ -413,6 +671,19 @@ extern "C" OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void)
 		AReleaseBindings,
 		ASetBinding,
 		AClearBinding,
+		AGetEncoderConfig,
+		AGetEncoderOptions,
+		ASetEncoderConfig,
+		AGetImagingSettings,
+		AGetImagingOptions,
+		ASetImagingSettings,
+		AGetNetworkInterfaces,
+		AReleaseNetworkInterfaces,
+		ASetNetworkInterface,
+		AGetOSDs,
+		AReleaseOSDs,
+		ASetOSD,
+		ADeleteOSD,
 	};
 	return &abi;
 }

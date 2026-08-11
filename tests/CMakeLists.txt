@@ -102,6 +102,21 @@ if(BUILD_TESTING)
 		)
 	endif()
 
+	# Live camera-config flow against the mock: the config-panel backend
+	# (encoder / imaging / network / OSD) round-trips through mock state via
+	# the public ABI.
+	if(Python3_FOUND)
+		add_executable(config_live_test unit/config_live_test.cpp
+			       ../obs/abi_test.cpp)
+		target_link_libraries(config_live_test PRIVATE obs_abi)
+		add_test(
+			NAME config_live
+			COMMAND ${Python3_EXECUTABLE}
+				${CMAKE_CURRENT_SOURCE_DIR}/run_config_test.py
+				$<TARGET_FILE:config_live_test>
+		)
+	endif()
+
 	# Public ABI (M3): a C consumer links the obs-free ABI core and drives
 	# get_camera_list / presets / moves / scene-bindings against the mock.
 	# The driver also asserts the built plugin module exports

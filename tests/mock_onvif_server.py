@@ -54,6 +54,12 @@ CAPABILITIES_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
         <tds:PTZ>
           <tds:XAddr>http://127.0.0.1/onvif/ptz_service</tds:XAddr>
         </tds:PTZ>
+        <tds:Imaging>
+          <tds:XAddr>http://127.0.0.1/onvif/imaging_service</tds:XAddr>
+        </tds:Imaging>
+        <tds:Display>
+          <tds:XAddr>http://127.0.0.1/onvif/display_service</tds:XAddr>
+        </tds:Display>
       </tds:Capabilities>
     </tds:GetCapabilitiesResponse>
   </env:Body>
@@ -125,6 +131,167 @@ def _ptz_set_preset_response(preset_token):
             "<env:Body><ttptz:SetPresetResponse>"
             f"<ttptz:PresetToken>{preset_token}</ttptz:PresetToken>"
             "</ttptz:SetPresetResponse></env:Body></env:Envelope>")
+
+
+# -- camera configuration (config-panel backend) ------------------------------
+# Encoding namespaces.
+TRT = "http://www.onvif.org/ver10/media/wsdl"
+TIMG = "http://www.onvif.org/ver20/imaging/wsdl"
+TDISP = "http://www.onvif.org/ver20/display/wsdl"
+
+
+def _num(v):
+    # Tolerate ints/floats/strings; emit without a trailing ".0" for ints.
+    f = float(v)
+    return str(int(f)) if f == int(f) else repr(f)
+
+
+def _encoder_configs_response(configs):
+    rows = []
+    for token, cfg in configs.items():
+        rows.append(
+            f'<trt:Configurations token="{token}">'
+            f'<tt:Name>{cfg["name"]}</tt:Name>'
+            f'<tt:Encoding>{cfg["encoding"]}</tt:Encoding>'
+            f'<tt:Resolution><tt:Width>{_num(cfg["width"])}</tt:Width>'
+            f'<tt:Height>{_num(cfg["height"])}</tt:Height></tt:Resolution>'
+            f'<tt:RateControl><tt:FrameRateLimit>{_num(cfg["frame_rate"])}'
+            f"</tt:FrameRateLimit>"
+            f'<tt:BitrateLimit>{_num(cfg["bitrate"])}</tt:BitrateLimit>'
+            f"</tt:RateControl></trt:Configurations>")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:trt="{TRT}" '
+            f'xmlns:tt="{TT}"><env:Body>'
+            "<trt:GetVideoEncoderConfigurationsResponse>"
+            + "".join(rows)
+            + "</trt:GetVideoEncoderConfigurationsResponse></env:Body></env:Envelope>")
+
+
+def _encoder_options_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:trt="{TRT}" '
+            f'xmlns:tt="{TT}"><env:Body>'
+            "<trt:GetVideoEncoderConfigurationOptionsResponse>"
+            "<trt:Options><tt:FrameRateRange><tt:Min>1</tt:Min>"
+            "<tt:Max>30</tt:Max></tt:FrameRateRange>"
+            "<tt:BitrateRange><tt:Min>32</tt:Min><tt:Max>8192</tt:Max>"
+            "</tt:BitrateRange><tt:H264>"
+            "<tt:ResolutionAvailable><tt:Width>1920</tt:Width>"
+            "<tt:Height>1080</tt:Height></tt:ResolutionAvailable>"
+            "<tt:ResolutionAvailable><tt:Width>1280</tt:Width>"
+            "<tt:Height>720</tt:Height></tt:ResolutionAvailable>"
+            "<tt:ResolutionAvailable><tt:Width>640</tt:Width>"
+            "<tt:Height>480</tt:Height></tt:ResolutionAvailable>"
+            "</tt:H264></trt:Options>"
+            "</trt:GetVideoEncoderConfigurationOptionsResponse>"
+            "</env:Body></env:Envelope>")
+
+
+def _set_encoder_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:trt="{TRT}">'
+            "<env:Body><trt:SetVideoEncoderConfigurationResponse/>"
+            "</env:Body></env:Envelope>")
+
+
+def _imaging_settings_response(im):
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:timg="{TIMG}" '
+            f'xmlns:tt="{TT}"><env:Body>'
+            "<timg:GetImagingSettingsResponse><tt:ImagingSettings>"
+            f'<tt:Brightness>{_num(im["brightness"])}</tt:Brightness>'
+            f'<tt:ColorSaturation>{_num(im["color_saturation"])}'
+            "</tt:ColorSaturation>"
+            f'<tt:Contrast>{_num(im["contrast"])}</tt:Contrast>'
+            f'<tt:Sharpness>{_num(im["sharpness"])}</tt:Sharpness>'
+            "</tt:ImagingSettings></timg:GetImagingSettingsResponse>"
+            "</env:Body></env:Envelope>")
+
+
+def _imaging_options_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:timg="{TIMG}" '
+            f'xmlns:tt="{TT}"><env:Body>'
+            "<timg:GetImagingOptionsResponse><tt:ImagingOptions>"
+            "<tt:Brightness><tt:Min>0</tt:Min><tt:Max>100</tt:Max>"
+            "</tt:Brightness>"
+            "<tt:ColorSaturation><tt:Min>0</tt:Min><tt:Max>100</tt:Max>"
+            "</tt:ColorSaturation>"
+            "<tt:Contrast><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:Contrast>"
+            "<tt:Sharpness><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:Sharpness>"
+            "</tt:ImagingOptions></timg:GetImagingOptionsResponse>"
+            "</env:Body></env:Envelope>")
+
+
+def _set_imaging_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:timg="{TIMG}">'
+            "<env:Body><timg:SetImagingSettingsResponse/>"
+            "</env:Body></env:Envelope>")
+
+
+def _network_interfaces_response(netifs):
+    rows = []
+    for n in netifs:
+        if n["dhcp"]:
+            ipv4 = "<tt:DHCP>true</tt:DHCP>"
+        else:
+            ipv4 = (f'<tt:Manual><tt:Address>{n["address"]}</tt:Address>'
+                    f'<tt:PrefixLength>{_num(n["prefix_length"])}</tt:PrefixLength>'
+                    "</tt:Manual>")
+        rows.append(
+            f'<tds:NetworkInterfaces token="{n["token"]}">'
+            f'<tt:Enabled>{"true" if n["enabled"] else "false"}</tt:Enabled>'
+            f'<tt:Info><tt:Name>{n["name"]}</tt:Name>'
+            f'<tt:HwAddress>00:11:22:33:44:55</tt:HwAddress></tt:Info>'
+            f'<tt:IPv4><tt:Enabled>true</tt:Enabled>{ipv4}</tt:IPv4>'
+            "</tds:NetworkInterfaces>")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:tds="{TDS}" '
+            f'xmlns:tt="{TT}"><env:Body>'
+            "<tds:GetNetworkInterfacesResponse>"
+            + "".join(rows)
+            + "</tds:GetNetworkInterfacesResponse></env:Body></env:Envelope>")
+
+
+def _set_network_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:tds="{TDS}">'
+            "<env:Body><tds:SetNetworkInterfacesResponse>"
+            "<tds:RebootNeeded>false</tds:RebootNeeded>"
+            "</tds:SetNetworkInterfacesResponse></env:Body></env:Envelope>")
+
+
+def _osds_response(osds):
+    rows = []
+    for o in osds:
+        rows.append(
+            f'<tdisp:OSDs token="{o["token"]}"><tt:Type>Text</tt:Type>'
+            "<tt:Position><tt:X>0</tt:X><tt:Y>0</tt:Y></tt:Position>"
+            '<tt:TextString type="Plain">'
+            f'<tt:PlainText>{o["text"]}</tt:PlainText>'
+            "</tt:TextString></tdisp:OSDs>")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:tdisp="{TDISP}" '
+            f'xmlns:tt="{TT}"><env:Body><tdisp:GetOSDsResponse>'
+            + "".join(rows)
+            + "</tdisp:GetOSDsResponse></env:Body></env:Envelope>")
+
+
+def _set_osd_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:tdisp="{TDISP}">'
+            "<env:Body><tdisp:SetOSDResponse/>"
+            "</env:Body></env:Envelope>")
+
+
+def _delete_osd_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:tdisp="{TDISP}">'
+            "<env:Body><tdisp:DeleteOSDResponse/>"
+            "</env:Body></env:Envelope>")
+
+
 
 FAULT_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
 <env:Envelope xmlns:env="{ENV}">
@@ -201,6 +368,91 @@ class OnvifMock:
         self.basic_required = basic_required  # digest-off when True
         self.rtsp_host = rtsp_host  # host in GetStreamUri replied URIs
         self.presets = [{"token": "preset1", "name": "Home"}]
+        # Camera-config state (config-panel backend round-trips).
+        self.encoder = {
+            "enc1": {"name": "main", "encoding": "H264", "width": 1920,
+                     "height": 1080, "frame_rate": 25.0, "bitrate": 4096},
+            "enc2": {"name": "sub", "encoding": "H264", "width": 640,
+                     "height": 480, "frame_rate": 12.0, "bitrate": 1024},
+        }
+        self.imaging = {
+            "vs0": {"brightness": 50.0, "color_saturation": 50.0,
+                    "contrast": 50.0, "sharpness": 50.0},
+        }
+        self.osds = [{"token": "osd1", "text": "CAM-01"}]
+        self.netifs = [
+            {"token": "eth0", "name": "eth0", "enabled": True, "dhcp": True,
+             "address": "", "prefix_length": 0},
+            {"token": "eth1", "name": "eth1", "enabled": True, "dhcp": False,
+             "address": "192.168.1.10", "prefix_length": 24},
+        ]
+
+    def _handle_config(self, body):
+        if "GetVideoEncoderConfigurations" in body:
+            return (200, _encoder_configs_response(self.encoder))
+        if "GetVideoEncoderConfigurationOptions" in body:
+            return (200, _encoder_options_response())
+        if "SetVideoEncoderConfiguration" in body:
+            first = next(iter(self.encoder.values()))
+            name = _grab_tag(body, "Name")
+            encoding = _grab_tag(body, "Encoding")
+            width = _grab_tag(body, "Width")
+            height = _grab_tag(body, "Height")
+            frame_rate = _grab_tag(body, "FrameRateLimit")
+            bitrate = _grab_tag(body, "BitrateLimit")
+            if name:
+                first["name"] = name
+            if encoding:
+                first["encoding"] = encoding
+            if width:
+                first["width"] = int(float(width))
+            if height:
+                first["height"] = int(float(height))
+            if frame_rate:
+                first["frame_rate"] = float(frame_rate)
+            if bitrate:
+                first["bitrate"] = int(float(bitrate))
+            return (200, _set_encoder_response())
+        if "GetImagingSettings" in body:
+            return (200, _imaging_settings_response(self.imaging["vs0"]))
+        if "GetImagingOptions" in body:
+            return (200, _imaging_options_response())
+        if "SetImagingSettings" in body:
+            im = self.imaging["vs0"]
+            for key, tag in [("brightness", "Brightness"),
+                             ("color_saturation", "ColorSaturation"),
+                             ("contrast", "Contrast"),
+                             ("sharpness", "Sharpness")]:
+                v = _grab_tag(body, tag)
+                if v:
+                    im[key] = float(v)
+            return (200, _set_imaging_response())
+        if "GetNetworkInterfaces" in body:
+            return (200, _network_interfaces_response(self.netifs))
+        if "SetNetworkInterfaces" in body:
+            first = self.netifs[0]
+            first["dhcp"] = "<tt:DHCP>true</tt:DHCP>" in body
+            addr = _grab_tag(body, "Address")
+            prefix = _grab_tag(body, "PrefixLength")
+            if addr:
+                first["address"] = addr
+            if prefix:
+                first["prefix_length"] = int(prefix)
+            return (200, _set_network_response())
+        if "GetOSDs" in body:
+            return (200, _osds_response(self.osds))
+        if "SetOSD" in body:
+            text = _grab_tag(body, "PlainText")
+            if text and self.osds:
+                self.osds[0]["text"] = text
+            elif text:
+                self.osds.append({"token": "osd1", "text": text})
+            return (200, _set_osd_response())
+        if "DeleteOSD" in body:
+            token = _grab_tag(body, "OSDToken")
+            self.osds = [o for o in self.osds if o["token"] != token]
+            return (200, _delete_osd_response())
+        return None
 
     def _handle_ptz(self, body):
         if "GetPresets" in body:
@@ -245,6 +497,11 @@ class OnvifMock:
         ptz = self._handle_ptz(body)
         if ptz is not None:
             return ptz
+
+        # 2.5 Stateful camera-config operations -------------------------------
+        cfg = self._handle_config(body)
+        if cfg is not None:
+            return cfg
 
         # 3. Stateless route by operation marker -------------------------------
         for marker, response in _routes(self.rtsp_host).items():

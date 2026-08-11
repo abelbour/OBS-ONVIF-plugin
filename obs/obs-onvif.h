@@ -40,6 +40,67 @@ typedef struct obs_cast_camera_info_s {
 	int online;
 } obs_cast_camera_info_t;
 
+typedef struct obs_cast_resolution_s {
+	int width;
+	int height;
+} obs_cast_resolution_t;
+
+/* Camera configuration panel structures. Fixed-size character buffers (not
+ * heap pointers) so single-value results need no release function. */
+typedef struct obs_cast_encoder_config_s {
+	char token[64];
+	char name[128];
+	char encoding[16];
+	int width;
+	int height;
+	double frame_rate;
+	int bitrate;
+} obs_cast_encoder_config_t;
+
+typedef struct obs_cast_encoder_options_s {
+	double min_frame_rate;
+	double max_frame_rate;
+	int min_bitrate;
+	int max_bitrate;
+	obs_cast_resolution_t resolutions[16];
+	int resolution_count;
+} obs_cast_encoder_options_t;
+
+typedef struct obs_cast_imaging_settings_s {
+	int present;
+	double brightness;
+	double color_saturation;
+	double contrast;
+	double sharpness;
+} obs_cast_imaging_settings_t;
+
+typedef struct obs_cast_imaging_options_s {
+	int present;
+	double min_brightness;
+	double max_brightness;
+	double min_color_saturation;
+	double max_color_saturation;
+	double min_contrast;
+	double max_contrast;
+	double min_sharpness;
+	double max_sharpness;
+} obs_cast_imaging_options_t;
+
+typedef struct obs_cast_network_interface_s {
+	char token[64];
+	char name[64];
+	char address[64];
+	int enabled;
+	int dhcp;
+	int prefix_length;
+} obs_cast_network_interface_t;
+
+typedef struct obs_cast_osd_config_s {
+	char token[64];
+	char text[256];
+	int enabled;
+} obs_cast_osd_config_t;
+
 /* ABI return codes: 0 = ok, -1 = camera/scene not found,
  * -2 = camera offline, -3 = SOAP/transport error. */
 typedef struct obs_cast_abi_s {
@@ -75,6 +136,34 @@ typedef struct obs_cast_abi_s {
 	int (*set_binding)(const char *scene_name, const char *cam,
 			   const char *preset_token);
 	int (*clear_binding)(const char *scene_name);
+
+	/* camera configuration (config panel). All ops target the camera's
+	 * first profile. Single-value results use fixed buffers; list results
+	 * are released via the matching release_* function. */
+	int (*get_encoder_config)(const char *cam,
+				  obs_cast_encoder_config_t *out);
+	int (*get_encoder_options)(const char *cam,
+				   obs_cast_encoder_options_t *out);
+	int (*set_encoder_config)(const char *cam,
+				  const obs_cast_encoder_config_t *cfg);
+	int (*get_imaging_settings)(const char *cam,
+				    obs_cast_imaging_settings_t *out);
+	int (*get_imaging_options)(const char *cam,
+				   obs_cast_imaging_options_t *out);
+	int (*set_imaging_settings)(const char *cam,
+				    const obs_cast_imaging_settings_t *settings);
+	int (*get_network_interfaces)(const char *cam,
+				      obs_cast_network_interface_t **out,
+				      int *count);
+	void (*release_network_interfaces)(obs_cast_network_interface_t *out,
+					   int count);
+	int (*set_network_interface)(const char *cam,
+				     const obs_cast_network_interface_t *ni);
+	int (*get_osds)(const char *cam, obs_cast_osd_config_t **out,
+			int *count);
+	void (*release_osds)(obs_cast_osd_config_t *out, int count);
+	int (*set_osd)(const char *cam, const obs_cast_osd_config_t *osd);
+	int (*delete_osd)(const char *cam, const char *osd_token);
 } obs_cast_abi_t;
 
 OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void);

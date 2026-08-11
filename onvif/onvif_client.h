@@ -12,6 +12,7 @@ struct Capabilities {
 	std::string ptzXAddr;
 	std::string eventsXAddr;
 	std::string imagingXAddr;
+	std::string displayXAddr;
 };
 
 struct DeviceInfo {
@@ -38,6 +39,70 @@ struct StreamUriResult {
 struct Preset {
 	std::string token;
 	std::string name;
+};
+
+struct Resolution {
+	int width = 0;
+	int height = 0;
+};
+
+// One VideoEncoderConfiguration (the first profile's encoder is what the
+// config panel edits).
+struct VideoEncoderConfig {
+	std::string token;
+	std::string name;
+	std::string encoding; // e.g. "H264"
+	Resolution resolution;
+	double frameRate = 0.0;
+	int bitrate = 0;
+};
+
+// Allowed ranges / choices for a VideoEncoderConfiguration (Get...Options).
+struct VideoEncoderOptions {
+	double minFrameRate = 0.0;
+	double maxFrameRate = 0.0;
+	int minBitrate = 0;
+	int maxBitrate = 0;
+	std::vector<Resolution> resolutions;
+};
+
+// Imaging settings (brightness/saturation/contrast/sharpness). `present` is
+// false when the device's imaging service did not return settings.
+struct ImagingSettings {
+	bool present = false;
+	double brightness = 0.0;
+	double colorSaturation = 0.0;
+	double contrast = 0.0;
+	double sharpness = 0.0;
+};
+
+struct ImagingOptions {
+	bool present = false;
+	double minBrightness = 0.0;
+	double maxBrightness = 100.0;
+	double minColorSaturation = 0.0;
+	double maxColorSaturation = 100.0;
+	double minContrast = 0.0;
+	double maxContrast = 100.0;
+	double minSharpness = 0.0;
+	double maxSharpness = 100.0;
+};
+
+// One network interface (IPv4 view used by the config panel's Network tab).
+struct NetworkInterfaceInfo {
+	std::string token;
+	std::string name;
+	bool enabled = false;
+	bool dhcp = false;
+	std::string address;
+	int prefixLength = 0;
+};
+
+// One OSD text overlay configuration.
+struct OSDConfig {
+	std::string token;
+	std::string text;
+	bool enabled = false;
 };
 
 // Typed ONVIF device-service client on top of SoapClient. All operations are
@@ -83,6 +148,27 @@ public:
 			    double tilt, double zoom, double timeoutSeconds);
 	void Stop(const std::string &profileToken);
 
+	// Media: encoder configuration ------------------------------------------
+	std::vector<VideoEncoderConfig> GetVideoEncoderConfigurations();
+	VideoEncoderOptions GetVideoEncoderConfigurationOptions(
+		const std::string &encoderToken);
+	void SetVideoEncoderConfiguration(const VideoEncoderConfig &cfg);
+
+	// Imaging service -------------------------------------------------------
+	ImagingSettings GetImagingSettings(const std::string &videoSourceToken);
+	ImagingOptions GetImagingOptions(const std::string &videoSourceToken);
+	void SetImagingSettings(const std::string &videoSourceToken,
+				const ImagingSettings &s);
+
+	// Device: network interfaces --------------------------------------------
+	std::vector<NetworkInterfaceInfo> GetNetworkInterfaces();
+	void SetNetworkInterface(const NetworkInterfaceInfo &ni);
+
+	// Display (ver20): OSD text overlays ------------------------------------
+	std::vector<OSDConfig> GetOSDs(const std::string &videoSourceToken);
+	void SetOSD(const OSDConfig &cfg);
+	void DeleteOSD(const std::string &osdToken);
+
 private:
 	// Sends one operation; throws std::runtime_error on transport failure or
 	// SOAP fault. Returns the raw response body.
@@ -105,6 +191,8 @@ private:
 	std::string deviceService_;
 	std::string mediaService_;
 	std::string ptzService_;
+	std::string imagingService_;
+	std::string displayService_;
 	Capabilities caps_;
 };
 
