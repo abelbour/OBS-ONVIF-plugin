@@ -36,6 +36,7 @@ void Registry::RemoveCamera(const std::string &id)
 
 Camera *Registry::UpsertCamera(const Camera &cam)
 {
+	cameras_[cam.id] = cam;
 	return &cameras_[cam.id];
 }
 

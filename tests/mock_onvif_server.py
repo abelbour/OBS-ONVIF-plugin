@@ -124,7 +124,8 @@ def _routes(rtsp_host):
         "GetDeviceInformation": DEVICE_INFO_RESPONSE,
         "GetCapabilities": CAPABILITIES_RESPONSE,
         "GetProfiles": PROFILES_RESPONSE,
-        "GetStreamUri": STREAM_URI_RESPONSE.format(rtsp_host=rtsp_host),
+        "GetStreamUri": STREAM_URI_RESPONSE.format(rtsp_host=rtsp_host,
+                                               ENV=ENV, TRT=TRT, TT=TT),
         "GotoPreset": GOTO_PRESET_RESPONSE,
     }
 
