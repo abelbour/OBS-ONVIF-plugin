@@ -3,7 +3,10 @@
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 
+#include <tuple>
+
 #include "abi.h"
+#include "discovery.h"
 #include "dock.h"
 #include "hotkeys.h"
 #include "obs-onvif.h"
@@ -15,11 +18,14 @@ namespace obs_onvif::glue {
 
 namespace {
 
-// ABI providers: the camera table is a snapshot of the persisted registry
-// (the continuous discovery listener that refreshes live state is the M2→M3
-// bridge); credentials come from the Windows Credential Vault.
+// ABI providers: the camera table comes from the live discovery loop once it
+// is running (seeded from the persisted registry); otherwise it falls back to
+// the persisted store snapshot. Credentials come from the Windows Credential
+// Vault.
 std::vector<obs_onvif::registry::Camera> LoadCameraTable()
 {
+	if (obs_onvif::discovery::Running())
+		return obs_onvif::discovery::Snapshot();
 	obs_onvif::registry::Store store(ConfigDir());
 	std::vector<obs_onvif::registry::Camera> cams;
 	store.LoadCameras(cams);
@@ -93,6 +99,34 @@ void InitAbi()
 		bfree(conf);
 }
 
+/* The discovery loop reports moves from its own thread; the apply policy must
+ * only run on the OBS main thread, so marshal through obs_queue_task. */
+void OnDiscoveryMoved(const std::string &camera_id,
+		      const std::string &new_stream_uri,
+		      const std::string &credentials)
+{
+	auto *payload = new std::tuple<std::string, std::string, std::string>(
+		camera_id, new_stream_uri, credentials);
+	obs_queue_task(
+		OBS_TASK_UI,
+		[](void *param) {
+			auto *t = static_cast<
+				std::tuple<std::string, std::string,
+					   std::string> *>(param);
+			OnCameraMoved(std::get<0>(*t), std::get<1>(*t),
+				      std::get<2>(*t));
+			delete t;
+		},
+		payload, false);
+}
+
+void StartDiscovery()
+{
+	obs_onvif::discovery::Configure(ConfigDir(), LoadCredentials,
+					 OnDiscoveryMoved);
+	obs_onvif::discovery::Start();
+}
+
 } // namespace
 
 void Load()
@@ -104,6 +138,7 @@ void Load()
 	hotkeys::RegisterPresetHotkeys();
 	hotkeys::RegisterMoveHotkeys();
 	obs_frontend_add_event_callback(OnFrontendEvent, nullptr);
+	StartDiscovery();
 #ifdef ENABLE_QT
 	LoadDock();
 #endif
@@ -113,6 +148,7 @@ void Unload()
 {
 	obs_frontend_remove_event_callback(OnFrontendEvent, nullptr);
 	hotkeys::UnregisterAll();
+	obs_onvif::discovery::Stop();
 	abi::Shutdown();
 #ifdef ENABLE_QT
 	UnloadDock();

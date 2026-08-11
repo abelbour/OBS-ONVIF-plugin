@@ -54,6 +54,7 @@ target_sources(${CMAKE_PROJECT_NAME}
   PRIVATE
     src/plugin-main.c
     obs/glue.cpp
+    obs/discovery.cpp
     obs/scene_presets.cpp
     obs/hotkeys.cpp
     obs/obs_apply.cpp

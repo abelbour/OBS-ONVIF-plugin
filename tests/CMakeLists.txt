@@ -84,6 +84,24 @@ if(BUILD_TESTING)
 		)
 	endif()
 
+	# Live discovery-bridge flow against the mock: the M2→M3 discovery loop's
+	# contact resolution seeds a camera, then a re-bound mock host is detected
+	# as a move and reported through the onMoved callback. Shares obs_abi's
+	# pattern of compiling an obs-layer source into the test.
+	if(Python3_FOUND)
+		add_executable(discovery_live_test unit/discovery_live_test.cpp
+			       ../obs/discovery.cpp)
+		target_include_directories(discovery_live_test PRIVATE
+			"${CMAKE_CURRENT_SOURCE_DIR}/../obs")
+		target_link_libraries(discovery_live_test PRIVATE onvif_core registry_lib)
+		add_test(
+			NAME discovery_bridge_live
+			COMMAND ${Python3_EXECUTABLE}
+				${CMAKE_CURRENT_SOURCE_DIR}/run_discovery_bridge_test.py
+				$<TARGET_FILE:discovery_live_test>
+		)
+	endif()
+
 	# Public ABI (M3): a C consumer links the obs-free ABI core and drives
 	# get_camera_list / presets / moves / scene-bindings against the mock.
 	# The driver also asserts the built plugin module exports

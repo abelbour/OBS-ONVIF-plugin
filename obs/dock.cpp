@@ -15,6 +15,7 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -34,6 +35,9 @@
 #include <obs-module.h>
 #include <plugin-support.h>
 
+#include <atomic>
+#include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -66,6 +70,34 @@ QString String(const char *key)
 QString FromUtf8(const std::string &s)
 {
 	return QString::fromUtf8(s.c_str());
+}
+
+// Fills a camera combo with the ABI camera table (id as user data). When
+// `onlineOnly` is set, offline cameras are skipped (PTZ operates live).
+void PopulateCameraCombo(QComboBox *combo, bool onlineOnly)
+{
+	const QString prev = combo->currentData().toString();
+	combo->blockSignals(true);
+	combo->clear();
+	obs_cast_abi_t *abi = Abi();
+	if (abi) {
+		obs_cast_camera_info_t *arr = nullptr;
+		int n = 0;
+		if (abi->get_camera_list(&arr, &n) == 0 && arr) {
+			for (int i = 0; i < n; ++i) {
+				if (onlineOnly && !arr[i].online)
+					continue;
+				combo->addItem(FromUtf8(arr[i].name),
+					       FromUtf8(arr[i].camera_id));
+			}
+			if (abi->release_camera_list)
+				abi->release_camera_list(arr);
+		}
+	}
+	const int idx = combo->findData(prev);
+	if (idx >= 0)
+		combo->setCurrentIndex(idx);
+	combo->blockSignals(false);
 }
 
 // -- Cameras tab -------------------------------------------------------------
@@ -339,10 +371,28 @@ public:
 		buttons->addWidget(remove);
 		buttons->addStretch();
 
+		auto *bindScene = new QPushButton(
+			String("Dock.Presets.BindScene"), this);
+		auto *clearScene = new QPushButton(
+			String("Dock.Presets.ClearScene"), this);
+		status_ = new QLabel(this);
+		status_->setWordWrap(true);
+		connect(bindScene, &QPushButton::clicked, this,
+			[this]() { BindToCurrentScene(); });
+		connect(clearScene, &QPushButton::clicked, this,
+			[this]() { ClearSceneBinding(); });
+
+		auto *binding = new QHBoxLayout();
+		binding->addWidget(bindScene);
+		binding->addWidget(clearScene);
+		binding->addStretch();
+
 		auto *layout = new QVBoxLayout(this);
 		layout->addLayout(cameraRow);
 		layout->addWidget(list_, 1);
 		layout->addLayout(buttons);
+		layout->addLayout(binding);
+		layout->addWidget(status_);
 
 		RefreshCameras();
 	}
@@ -512,8 +562,58 @@ private:
 		RefreshPresets();
 	}
 
+	std::string CurrentSceneName() const
+	{
+		obs_source_t *scene = obs_frontend_get_current_scene();
+		if (!scene)
+			return {};
+		const char *name = obs_source_get_name(scene);
+		const std::string result = name ? name : "";
+		obs_source_release(scene);
+		return result;
+	}
+
+	// Binds the selected camera+preset to the current scene (fired by
+	// scene_presets on scene activation). set_binding is a per-collection
+	// store write — fast enough for the UI thread.
+	void BindToCurrentScene()
+	{
+		const std::string scene = CurrentSceneName();
+		const QString cam = CurrentCameraId();
+		const QString token = SelectedToken();
+		if (scene.empty()) {
+			status_->setText(String("Dock.Presets.NoScene"));
+			return;
+		}
+		if (cam.isEmpty() || token.isEmpty()) {
+			status_->setText(String("Dock.Presets.NoPreset"));
+			return;
+		}
+		obs_cast_abi_t *abi = Abi();
+		if (abi)
+			abi->set_binding(scene.c_str(), cam.toStdString().c_str(),
+					 token.toStdString().c_str());
+		status_->setText(
+			String("Dock.Presets.Bound").arg(FromUtf8(scene)));
+	}
+
+	void ClearSceneBinding()
+	{
+		const std::string scene = CurrentSceneName();
+		if (scene.empty()) {
+			status_->setText(String("Dock.Presets.NoScene"));
+			return;
+		}
+		obs_cast_abi_t *abi = Abi();
+		if (abi)
+			abi->clear_binding(scene.c_str());
+		status_->setText(
+			String("Dock.Presets.Cleared").arg(FromUtf8(scene)));
+	}
+
 	QComboBox *cameras_;
 	QListWidget *list_;
+	QLabel *status_;
 };
 
 // -- Policy tab --------------------------------------------------------------
@@ -589,6 +689,128 @@ private:
 	QComboBox *policy_;
 };
 
+// -- PTZ pad -----------------------------------------------------------------
+
+class PtzWidget : public QWidget {
+public:
+	explicit PtzWidget(QWidget *parent = nullptr)
+		: QWidget(parent)
+	{
+		cameras_ = new QComboBox(this);
+		auto *cameraRow = new QHBoxLayout();
+		cameraRow->addWidget(new QLabel(String("Dock.Ptz.Camera"), this));
+		cameraRow->addWidget(cameras_, 1);
+
+		auto *pad = new QGridLayout();
+		pad->setSpacing(4);
+		pad->addWidget(PadButton("Dock.Ptz.Up", 0.0, -0.3, 0.0), 0, 1);
+		pad->addWidget(PadButton("Dock.Ptz.Left", -0.3, 0.0, 0.0), 1, 0);
+		pad->addWidget(StopButton(), 1, 1);
+		pad->addWidget(PadButton("Dock.Ptz.Right", 0.3, 0.0, 0.0), 1, 2);
+		pad->addWidget(PadButton("Dock.Ptz.Down", 0.0, 0.3, 0.0), 2, 1);
+
+		auto *zoom = new QHBoxLayout();
+		zoom->addWidget(PadButton("Dock.Ptz.ZoomIn", 0.0, 0.0, 0.2));
+		zoom->addWidget(PadButton("Dock.Ptz.ZoomOut", 0.0, 0.0, -0.2));
+		zoom->addStretch();
+
+		auto *refresh = new QPushButton(String("Dock.Refresh"), this);
+		connect(refresh, &QPushButton::clicked, this,
+			[this]() { RefreshCameras(); });
+
+		auto *layout = new QVBoxLayout(this);
+		layout->addLayout(cameraRow);
+		layout->addLayout(pad);
+		layout->addLayout(zoom);
+		layout->addWidget(refresh, 0, Qt::AlignLeft);
+		layout->addStretch();
+
+		RefreshCameras();
+	}
+
+	~PtzWidget() override
+	{
+		if (held_)
+			held_->store(false);
+	}
+
+private:
+	QPushButton *PadButton(const char *key, double pan, double tilt,
+			       double zoom)
+	{
+		auto *b = new QPushButton(String(key), this);
+		b->setMinimumHeight(28);
+		connect(b, &QPushButton::pressed, this,
+			[this, pan, tilt, zoom]() { StartAxis(pan, tilt, zoom); });
+		connect(b, &QPushButton::released, this,
+			[this]() { StopAxis(); });
+		return b;
+	}
+
+	QPushButton *StopButton()
+	{
+		auto *b = new QPushButton(String("Dock.Ptz.Stop"), this);
+		b->setMinimumHeight(28);
+		connect(b, &QPushButton::clicked, this,
+			[this]() { StopAxis(); });
+		return b;
+	}
+
+	QString CurrentCameraId() const
+	{
+		return cameras_->currentData().toString();
+	}
+
+	void RefreshCameras()
+	{
+		PopulateCameraCombo(cameras_, /*onlineOnly=*/true);
+	}
+
+	void StartAxis(double pan, double tilt, double zoom)
+	{
+		const QString cam = CurrentCameraId();
+		if (cam.isEmpty())
+			return;
+		if (held_)
+			held_->store(false); // stop any prior hold
+		auto held = std::make_shared<std::atomic<bool>>(true);
+		held_ = held;
+		const std::string cameraId = cam.toStdString();
+		std::thread([held, cameraId, pan, tilt, zoom]() {
+			obs_cast_abi_t *abi = obs_onvif_get_abi();
+			if (!abi)
+				return;
+			/* Re-issue the velocity move while the button is held;
+			 * the worker gives each SOAP call a short timeout. */
+			while (held->load()) {
+				abi->move(cameraId.c_str(), pan, tilt, zoom);
+				std::this_thread::sleep_for(
+					std::chrono::milliseconds(300));
+			}
+		}).detach();
+	}
+
+	void StopAxis()
+	{
+		if (held_) {
+			held_->store(false);
+			held_.reset();
+		}
+		const QString cam = CurrentCameraId();
+		if (cam.isEmpty())
+			return;
+		const std::string cameraId = cam.toStdString();
+		std::thread([cameraId]() {
+			obs_cast_abi_t *abi = obs_onvif_get_abi();
+			if (abi)
+				abi->stop(cameraId.c_str());
+		}).detach();
+	}
+
+	QComboBox *cameras_;
+	std::shared_ptr<std::atomic<bool>> held_;
+};
+
 // -- Dock lifecycle ----------------------------------------------------------
 
 bool g_dock_loaded = false;
@@ -617,6 +839,7 @@ void LoadDock()
 	tabs->addTab(new CamerasWidget(tabs), String("Dock.TabCameras"));
 	tabs->addTab(new SourcesWidget(tabs), String("Dock.TabSources"));
 	tabs->addTab(new PresetsWidget(tabs), String("Dock.TabPresets"));
+	tabs->addTab(new PtzWidget(tabs), String("Dock.TabPtz"));
 	tabs->addTab(new PolicyWidget(tabs), String("Dock.TabPolicy"));
 
 	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("Dock.Title"),
