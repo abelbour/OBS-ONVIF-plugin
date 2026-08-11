@@ -31,7 +31,7 @@ void OnFrontendEvent(enum obs_frontend_event event, void *private_data)
 
 void InitAbi()
 {
-	char *conf = obs_module_config_path("");
+	char *conf = obs_frontend_get_current_profile_path();
 	char *collection = obs_frontend_get_current_scene_collection();
 	obs_onvif_abi_init(conf ? conf : "", collection ? collection : "");
 	if (collection)
