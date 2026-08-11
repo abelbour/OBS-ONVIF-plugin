@@ -22,6 +22,8 @@
 namespace obs_onvif::abi {
 namespace {
 
+using namespace obs_onvif::registry;
+
 struct Backend {
 	Store store{""};
 	CameraProvider cams;
