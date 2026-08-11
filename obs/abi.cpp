@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -29,6 +30,7 @@ struct Backend {
 	CameraProvider cams;
 	CredsProvider creds;
 	std::string collection;
+	std::shared_ptr<registry::Worker> worker;
 };
 
 Backend &GetBackend()
@@ -65,9 +67,11 @@ template <typename Fn> int RunCamera(const char *cam, Fn &&fn)
 	return fn(*found);
 }
 
-registry::Worker MakeWorker(const Backend &b)
+registry::Worker &MakeWorker(Backend &b)
 {
-	return registry::Worker(b.creds);
+	if (!b.worker)
+		b.worker = std::make_shared<registry::Worker>(b.creds);
+	return *b.worker;
 }
 
 void CopyToken(char *out, size_t cap, const std::string &token)
@@ -164,7 +168,7 @@ void AReleaseCameraList(obs_cast_camera_info_t *out)
 int AMove(const char *cam, double pan, double tilt, double zoom)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(GetBackend());
+		registry::Worker &w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.Move(c, pan, tilt, zoom, err))
 			return -3;
@@ -175,7 +179,7 @@ int AMove(const char *cam, double pan, double tilt, double zoom)
 int AStop(const char *cam)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(GetBackend());
+		registry::Worker &w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.Stop(c, err))
 			return -3;
@@ -187,7 +191,7 @@ int AStop(const char *cam)
 int AGotoPreset(const char *cam, const char *preset_token)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(GetBackend());
+		registry::Worker &w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.GotoPreset(c, preset_token ? preset_token : "", err))
 			return -3;
@@ -199,7 +203,7 @@ int ASavePreset(const char *cam, const char *name, char *token_out,
 		size_t token_cap)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(GetBackend());
+		registry::Worker &w = MakeWorker(GetBackend());
 		std::string token, err;
 		if (!w.SavePreset(c, name ? name : "", token, err))
 			return -3;
@@ -215,7 +219,7 @@ int AListPresets(const char *cam, const char **names[], const char **tokens[],
 	*tokens = nullptr;
 	*count = 0;
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(GetBackend());
+		registry::Worker &w = MakeWorker(GetBackend());
 		std::vector<registry::PresetInfo> presets;
 		std::string err;
 		if (!w.ListPresets(c, presets, err))
@@ -254,7 +258,7 @@ int ARenamePreset(const char *cam, const char *preset_token,
 		  const char *new_name)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(GetBackend());
+		registry::Worker &w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.RenamePreset(c, preset_token ? preset_token : "",
 				    new_name ? new_name : "", err))
@@ -266,7 +270,7 @@ int ARenamePreset(const char *cam, const char *preset_token,
 int ADeletePreset(const char *cam, const char *preset_token)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(GetBackend());
+		registry::Worker &w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.DeletePreset(c, preset_token ? preset_token : "", err))
 			return -3;
@@ -277,7 +281,7 @@ int ADeletePreset(const char *cam, const char *preset_token)
 int AGetCurrentPreset(const char *cam, char *token_out, size_t cap)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(GetBackend());
+		registry::Worker &w = MakeWorker(GetBackend());
 		std::string token;
 		w.CurrentPresetToken(c.id, token);
 		CopyToken(token_out, cap, token);
