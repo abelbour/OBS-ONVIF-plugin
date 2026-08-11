@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-#include "registry/store.h"
+#include "store.h"
 
 namespace obs_onvif::abi {
 namespace {

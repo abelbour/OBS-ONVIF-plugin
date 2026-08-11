@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "registry/camera.h"
-#include "registry/worker.h"
+#include "camera.h"
+#include "worker.h"
 
 namespace obs_onvif::abi {
 

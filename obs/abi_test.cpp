@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "registry/store.h"
+#include "store.h"
 
 extern "C" void obs_onvif_abi_test_configure(
 	const obs_onvif_test_config_t *cfg)
