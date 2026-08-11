@@ -15,6 +15,7 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -25,6 +26,7 @@
 #include <QMainWindow>
 #include <QObject>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -37,9 +39,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <map>
@@ -98,6 +102,17 @@ void PopulateCameraCombo(QComboBox *combo, bool onlineOnly)
 	if (idx >= 0)
 		combo->setCurrentIndex(idx);
 	combo->blockSignals(false);
+}
+
+// Copies a QLineEdit/QComboBox text into a fixed-size ABI string buffer.
+void CopyText(char *dst, size_t cap, const QString &s)
+{
+	if (!dst || !cap)
+		return;
+	const QByteArray bytes = s.toUtf8();
+	const size_t n = (size_t)bytes.size() >= cap ? cap - 1 : (size_t)bytes.size();
+	std::memcpy(dst, bytes.constData(), n);
+	dst[n] = '\0';
 }
 
 // -- Cameras tab -------------------------------------------------------------
@@ -811,6 +826,493 @@ private:
 	std::shared_ptr<std::atomic<bool>> held_;
 };
 
+// -- Config tab --------------------------------------------------------------
+
+// Everything one load pass collected from the ABI for a camera.
+struct ConfigSnapshot {
+	bool streamOk = false;
+	bool imageOk = false;
+	bool netOk = false;
+	bool osdOk = false;
+	obs_cast_encoder_config_t enc{};
+	obs_cast_encoder_options_t opt{};
+	obs_cast_imaging_settings_t img{};
+	obs_cast_imaging_options_t iopt{};
+	std::vector<obs_cast_network_interface_t> netifs;
+	std::vector<obs_cast_osd_config_t> osds;
+};
+
+class ConfigWidget : public QWidget {
+public:
+	explicit ConfigWidget(QWidget *parent = nullptr)
+		: QWidget(parent)
+	{
+		cameras_ = new QComboBox(this);
+		auto *cameraRow = new QHBoxLayout();
+		cameraRow->addWidget(new QLabel(String("Dock.Config.Camera"), this));
+		cameraRow->addWidget(cameras_, 1);
+		connect(cameras_, &QComboBox::currentIndexChanged, this,
+			[this](int) { LoadCurrent(); });
+
+		tabs_ = new QTabWidget(this);
+		tabs_->addTab(BuildImageTab(), String("Dock.Config.TabImage"));
+		tabs_->addTab(BuildStreamTab(), String("Dock.Config.TabStream"));
+		tabs_->addTab(BuildNetworkTab(), String("Dock.Config.TabNetwork"));
+		tabs_->addTab(BuildOsdTab(), String("Dock.Config.TabOSD"));
+
+		apply_ = new QPushButton(String("Dock.Config.Apply"), this);
+		apply_->setEnabled(false);
+		connect(apply_, &QPushButton::clicked, this,
+			[this]() { ApplyChanges(); });
+
+		status_ = new QLabel(this);
+		status_->setWordWrap(true);
+
+		auto *layout = new QVBoxLayout(this);
+		layout->addLayout(cameraRow);
+		layout->addWidget(tabs_, 1);
+		layout->addWidget(apply_, 0, Qt::AlignLeft);
+		layout->addWidget(status_);
+
+		RefreshCameras();
+	}
+
+private:
+	static QHBoxLayout *LabeledRow(QWidget *parent, const QString &label,
+				       QWidget *field)
+	{
+		auto *row = new QHBoxLayout();
+		row->addWidget(new QLabel(label, parent));
+		row->addWidget(field, 1);
+		return row;
+	}
+
+	static QDoubleSpinBox *MakeDouble(double min, double max)
+	{
+		auto *s = new QDoubleSpinBox();
+		s->setRange(min, max);
+		s->setSingleStep(1.0);
+		s->setDecimals(1);
+		return s;
+	}
+
+	QWidget *BuildImageTab()
+	{
+		imageForm_ = new QWidget(this);
+		brightness_ = MakeDouble(0, 100);
+		saturation_ = MakeDouble(0, 100);
+		contrast_ = MakeDouble(0, 100);
+		sharpness_ = MakeDouble(0, 100);
+		auto *form = new QVBoxLayout(imageForm_);
+		form->addLayout(LabeledRow(imageForm_, String("Dock.Config.Brightness"),
+					   brightness_));
+		form->addLayout(LabeledRow(imageForm_, String("Dock.Config.Saturation"),
+					   saturation_));
+		form->addLayout(LabeledRow(imageForm_, String("Dock.Config.Contrast"),
+					   contrast_));
+		form->addLayout(LabeledRow(imageForm_, String("Dock.Config.Sharpness"),
+					   sharpness_));
+		form->addStretch();
+
+		imagingUnsupported_ = new QLabel(String("Dock.Config.Unsupported"));
+		imagingUnsupported_->setWordWrap(true);
+
+		auto *tab = new QWidget(this);
+		auto *layout = new QVBoxLayout(tab);
+		layout->addWidget(imageForm_);
+		layout->addWidget(imagingUnsupported_);
+		return tab;
+	}
+
+	QWidget *BuildStreamTab()
+	{
+		streamForm_ = new QWidget(this);
+		streamInfo_ = new QLabel(streamForm_);
+		streamInfo_->setWordWrap(true);
+		resolutionCombo_ = new QComboBox(streamForm_);
+		frameRate_ = MakeDouble(1, 30);
+		bitrate_ = new QSpinBox(streamForm_);
+		bitrate_->setRange(32, 8192);
+
+		auto *form = new QVBoxLayout(streamForm_);
+		form->addWidget(streamInfo_);
+		form->addLayout(LabeledRow(streamForm_,
+					   String("Dock.Config.Resolution"),
+					   resolutionCombo_));
+		form->addLayout(LabeledRow(streamForm_,
+					   String("Dock.Config.FrameRate"),
+					   frameRate_));
+		form->addLayout(LabeledRow(streamForm_,
+					   String("Dock.Config.Bitrate"),
+					   bitrate_));
+		form->addStretch();
+
+		auto *tab = new QWidget(this);
+		auto *layout = new QVBoxLayout(tab);
+		layout->addWidget(streamForm_);
+		return tab;
+	}
+
+	QWidget *BuildNetworkTab()
+	{
+		netForm_ = new QWidget(this);
+		dhcp_ = new QCheckBox(String("Dock.Config.Dhcp"), netForm_);
+		ip_ = new QLineEdit(netForm_);
+		prefix_ = new QSpinBox(netForm_);
+		prefix_->setRange(0, 32);
+
+		auto *form = new QVBoxLayout(netForm_);
+		form->addWidget(dhcp_);
+		form->addLayout(LabeledRow(netForm_, String("Dock.Config.IP"), ip_));
+		form->addLayout(LabeledRow(netForm_, String("Dock.Config.Prefix"),
+					   prefix_));
+		form->addStretch();
+
+		netUnsupported_ = new QLabel(String("Dock.Config.Unsupported"));
+		netUnsupported_->setWordWrap(true);
+		connect(dhcp_, &QCheckBox::toggled, this, [this](bool on) {
+			ip_->setEnabled(!on);
+			prefix_->setEnabled(!on);
+		});
+
+		auto *tab = new QWidget(this);
+		auto *layout = new QVBoxLayout(tab);
+		layout->addWidget(netForm_);
+		layout->addWidget(netUnsupported_);
+		return tab;
+	}
+
+	QWidget *BuildOsdTab()
+	{
+		osdForm_ = new QWidget(this);
+		osdEnabled_ = new QCheckBox(String("Dock.Config.OsdEnabled"), osdForm_);
+		osdText_ = new QLineEdit(osdForm_);
+
+		auto *form = new QVBoxLayout(osdForm_);
+		form->addWidget(osdEnabled_);
+		form->addLayout(LabeledRow(osdForm_, String("Dock.Config.OsdText"),
+					   osdText_));
+		form->addStretch();
+
+		osdUnsupported_ = new QLabel(String("Dock.Config.Unsupported"));
+		osdUnsupported_->setWordWrap(true);
+
+		auto *tab = new QWidget(this);
+		auto *layout = new QVBoxLayout(tab);
+		layout->addWidget(osdForm_);
+		layout->addWidget(osdUnsupported_);
+		return tab;
+	}
+
+	void RefreshCameras()
+	{
+		PopulateCameraCombo(cameras_, /*onlineOnly=*/true);
+	}
+
+	void LoadCurrent()
+	{
+		const QString cam = cameras_->currentData().toString();
+		apply_->setEnabled(false);
+		status_->clear();
+		if (cam.isEmpty())
+			return;
+		const std::string cameraId = cam.toStdString();
+		const int gen = ++loadGen_;
+		std::thread([this, cameraId, gen]() {
+			const ConfigSnapshot snap = LoadSnapshot(cameraId);
+			QMetaObject::invokeMethod(
+				this,
+				[this, snap, gen]() { Populate(snap, gen); },
+				Qt::QueuedConnection);
+		}).detach();
+	}
+
+	static ConfigSnapshot LoadSnapshot(const std::string &cameraId)
+	{
+		ConfigSnapshot snap;
+		obs_cast_abi_t *abi = obs_onvif_get_abi();
+		if (!abi)
+			return snap;
+		const char *cam = cameraId.c_str();
+		if (abi->get_encoder_config(cam, &snap.enc) == 0)
+			snap.streamOk = true;
+		abi->get_encoder_options(cam, &snap.opt);
+		if (abi->get_imaging_settings(cam, &snap.img) == 0)
+			snap.imageOk = true;
+		abi->get_imaging_options(cam, &snap.iopt);
+		obs_cast_network_interface_t *nifs = nullptr;
+		int n = 0;
+		if (abi->get_network_interfaces(cam, &nifs, &n) == 0 && nifs) {
+			snap.netOk = true;
+			for (int i = 0; i < n; ++i)
+				snap.netifs.push_back(nifs[i]);
+			if (abi->release_network_interfaces)
+				abi->release_network_interfaces(nifs, n);
+		}
+		obs_cast_osd_config_t *osds = nullptr;
+		int o = 0;
+		if (abi->get_osds(cam, &osds, &o) == 0 && osds) {
+			snap.osdOk = true;
+			for (int i = 0; i < o; ++i)
+				snap.osds.push_back(osds[i]);
+			if (abi->release_osds)
+				abi->release_osds(osds, o);
+		}
+		return snap;
+	}
+
+	void Populate(const ConfigSnapshot &snap, int gen)
+	{
+		if (gen != loadGen_)
+			return; // a newer camera selection superseded this load
+		streamOk_ = snap.streamOk;
+		imageOk_ = snap.imageOk;
+		netOk_ = snap.netOk;
+		osdOk_ = snap.osdOk;
+		const bool any = streamOk_ || imageOk_ || netOk_ || osdOk_;
+		apply_->setEnabled(any);
+		if (!any) {
+			status_->setText(String("Dock.Config.Unsupported"));
+			return;
+		}
+
+		enc_ = snap.enc;
+		img_ = snap.img;
+		net_ = snap.netifs.empty() ? obs_cast_network_interface_t{}
+					  : snap.netifs.front();
+		osd_ = snap.osds.empty() ? obs_cast_osd_config_t{}
+					 : snap.osds.front();
+
+		PopulateStream(snap);
+		PopulateImage(snap);
+		PopulateNetwork(snap);
+		PopulateOsd(snap);
+		status_->clear();
+	}
+
+	void PopulateStream(const ConfigSnapshot &snap)
+	{
+		streamInfo_->setText(
+			QString::fromUtf8(snap.enc.encoding) + " " +
+			QString::number(snap.enc.width) + "x" +
+			QString::number(snap.enc.height) + " @ " +
+			QString::number(snap.enc.frame_rate) + " fps, " +
+			QString::number(snap.enc.bitrate) + " kbps");
+
+		resolutions_.clear();
+		resolutionCombo_->blockSignals(true);
+		resolutionCombo_->clear();
+		int sel = -1;
+		for (int i = 0; i < snap.opt.resolution_count; ++i) {
+			const int w = snap.opt.resolutions[i].width;
+			const int h = snap.opt.resolutions[i].height;
+			resolutions_.emplace_back(w, h);
+			resolutionCombo_->addItem(
+				QString::number(w) + "x" + QString::number(h), i);
+			if (w == snap.enc.width && h == snap.enc.height)
+				sel = i;
+		}
+		resolutionCombo_->setCurrentIndex(sel >= 0 ? sel : 0);
+		resolutionCombo_->blockSignals(false);
+
+		frameRate_->setRange(snap.opt.min_frame_rate > 0.0
+						     ? snap.opt.min_frame_rate
+						     : 1.0,
+				     snap.opt.max_frame_rate > 0.0
+					     ? snap.opt.max_frame_rate
+					     : 30.0);
+		frameRate_->setValue(snap.enc.frame_rate);
+		bitrate_->setRange(snap.opt.min_bitrate > 0 ? snap.opt.min_bitrate
+							   : 32,
+				   snap.opt.max_bitrate > 0 ? snap.opt.max_bitrate
+							    : 8192);
+		bitrate_->setValue(snap.enc.bitrate);
+	}
+
+	void PopulateImage(const ConfigSnapshot &snap)
+	{
+		const bool supported = imageOk_ && snap.img.present;
+		imageForm_->setVisible(supported);
+		imagingUnsupported_->setVisible(!supported);
+		if (!supported)
+			return;
+		brightness_->setRange(snap.iopt.min_brightness,
+				      snap.iopt.max_brightness);
+		brightness_->setValue(snap.img.brightness);
+		saturation_->setRange(snap.iopt.min_color_saturation,
+				      snap.iopt.max_color_saturation);
+		saturation_->setValue(snap.img.color_saturation);
+		contrast_->setRange(snap.iopt.min_contrast,
+				    snap.iopt.max_contrast);
+		contrast_->setValue(snap.img.contrast);
+		sharpness_->setRange(snap.iopt.min_sharpness,
+				     snap.iopt.max_sharpness);
+		sharpness_->setValue(snap.img.sharpness);
+	}
+
+	void PopulateNetwork(const ConfigSnapshot &snap)
+	{
+		netForm_->setVisible(netOk_);
+		netUnsupported_->setVisible(!netOk_);
+		if (!netOk_)
+			return;
+		dhcp_->setChecked(net_.dhcp != 0);
+		ip_->setText(QString::fromUtf8(net_.address));
+		prefix_->setValue(net_.prefix_length);
+		ip_->setEnabled(net_.dhcp == 0);
+		prefix_->setEnabled(net_.dhcp == 0);
+	}
+
+	void PopulateOsd(const ConfigSnapshot &snap)
+	{
+		osdForm_->setVisible(osdOk_);
+		osdUnsupported_->setVisible(!osdOk_);
+		if (!osdOk_)
+			return;
+		osdEnabled_->setChecked(osd_.enabled != 0 || !snap.osds.empty());
+		osdText_->setText(QString::fromUtf8(osd_.text));
+		osdEnabled_->setEnabled(true);
+		osdText_->setEnabled(true);
+	}
+
+	std::pair<int, int> CurrentResolution() const
+	{
+		const int idx = resolutionCombo_->currentIndex();
+		if (idx >= 0 && idx < (int)resolutions_.size())
+			return resolutions_[idx];
+		return {0, 0};
+	}
+
+	void ApplyChanges()
+	{
+		const QString cam = cameras_->currentData().toString();
+		if (cam.isEmpty())
+			return;
+		const std::string cameraId = cam.toStdString();
+
+		obs_cast_encoder_config_t enc = enc_;
+		const std::pair<int, int> res = CurrentResolution();
+		enc.width = res.first;
+		enc.height = res.second;
+		enc.frame_rate = frameRate_->value();
+		enc.bitrate = bitrate_->value();
+
+		obs_cast_imaging_settings_t img = img_;
+		img.present = 1;
+		img.brightness = brightness_->value();
+		img.color_saturation = saturation_->value();
+		img.contrast = contrast_->value();
+		img.sharpness = sharpness_->value();
+
+		obs_cast_network_interface_t net = net_;
+		net.dhcp = dhcp_->isChecked() ? 1 : 0;
+		CopyText(net.address, sizeof net.address, ip_->text());
+		net.prefix_length = prefix_->value();
+
+		obs_cast_osd_config_t osd = osd_;
+		osd.enabled = osdEnabled_->isChecked() ? 1 : 0;
+		CopyText(osd.text, sizeof osd.text, osdText_->text());
+
+		const bool doStream = streamOk_;
+		const bool doImage = imageOk_ && img_.present;
+		const bool doNet = netOk_;
+		const bool doOsd = osdOk_;
+
+		status_->setText(String("Dock.Config.Applying"));
+		apply_->setEnabled(false);
+
+		std::thread(
+			[cameraId, enc, img, net, osd, doStream, doImage, doNet,
+			 doOsd, this]() {
+				bool ok = true;
+				std::string err;
+				obs_cast_abi_t *abi = obs_onvif_get_abi();
+				const char *cam = cameraId.c_str();
+				if (abi && doStream &&
+				    abi->set_encoder_config(cam, &enc) != 0) {
+					ok = false;
+					err = "stream";
+				}
+				if (abi && doImage &&
+				    abi->set_imaging_settings(cam, &img) != 0) {
+					ok = false;
+					err = "image";
+				}
+				if (abi && doNet &&
+				    abi->set_network_interface(cam, &net) != 0) {
+					ok = false;
+					err = "network";
+				}
+				if (abi && doOsd) {
+					if (osd.enabled) {
+						if (abi->set_osd(cam, &osd) != 0) {
+							ok = false;
+							err = "osd";
+						}
+					} else {
+						const std::string token =
+							osd.token;
+						if (abi->delete_osd(
+							    cam, token.c_str()) !=
+						    0) {
+							ok = false;
+							err = "osd";
+						}
+					}
+				}
+				QMetaObject::invokeMethod(
+					this,
+					[this, ok, err]() {
+						apply_->setEnabled(true);
+						status_->setText(
+							ok
+								? String(
+									  "Dock.Config.Applied")
+								: String("Dock.Config.ApplyFailed")
+									  .arg(FromUtf8(err)));
+						LoadCurrent();
+					},
+					Qt::QueuedConnection);
+			})
+			.detach();
+	}
+
+	QComboBox *cameras_;
+	QTabWidget *tabs_;
+	QPushButton *apply_;
+	QLabel *status_;
+	QWidget *imageForm_;
+	QLabel *imagingUnsupported_;
+	QDoubleSpinBox *brightness_;
+	QDoubleSpinBox *saturation_;
+	QDoubleSpinBox *contrast_;
+	QDoubleSpinBox *sharpness_;
+	QWidget *streamForm_;
+	QLabel *streamInfo_;
+	QComboBox *resolutionCombo_;
+	QDoubleSpinBox *frameRate_;
+	QSpinBox *bitrate_;
+	QWidget *netForm_;
+	QLabel *netUnsupported_;
+	QCheckBox *dhcp_;
+	QLineEdit *ip_;
+	QSpinBox *prefix_;
+	QWidget *osdForm_;
+	QLabel *osdUnsupported_;
+	QCheckBox *osdEnabled_;
+	QLineEdit *osdText_;
+	int loadGen_ = 0;
+	std::vector<std::pair<int, int>> resolutions_;
+	obs_cast_encoder_config_t enc_{};
+	obs_cast_imaging_settings_t img_{};
+	obs_cast_network_interface_t net_{};
+	obs_cast_osd_config_t osd_{};
+	bool streamOk_ = false;
+	bool imageOk_ = false;
+	bool netOk_ = false;
+	bool osdOk_ = false;
+};
+
 // -- Dock lifecycle ----------------------------------------------------------
 
 bool g_dock_loaded = false;
@@ -840,6 +1342,7 @@ void LoadDock()
 	tabs->addTab(new SourcesWidget(tabs), String("Dock.TabSources"));
 	tabs->addTab(new PresetsWidget(tabs), String("Dock.TabPresets"));
 	tabs->addTab(new PtzWidget(tabs), String("Dock.TabPtz"));
+	tabs->addTab(new ConfigWidget(tabs), String("Dock.TabConfig"));
 	tabs->addTab(new PolicyWidget(tabs), String("Dock.TabPolicy"));
 
 	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("Dock.Title"),
