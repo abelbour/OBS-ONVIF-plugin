@@ -5,6 +5,7 @@
 
 #include "hotkeys.h"
 #include "obs-onvif.h"
+#include "obs_apply.h"
 #include "scene_presets.h"
 
 namespace obs_onvif::glue {
@@ -19,10 +20,12 @@ void OnFrontendEvent(enum obs_frontend_event event, void *private_data)
 		ScenePresets::OnSceneChanged();
 		break;
 	case OBS_FRONTEND_EVENT_STREAMING_STARTED:
-	case OBS_FRONTEND_EVENT_STREAMING_STOPPED:
 	case OBS_FRONTEND_EVENT_RECORDING_STARTED:
+		SetOutputActive(true);
+		break;
+	case OBS_FRONTEND_EVENT_STREAMING_STOPPED:
 	case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
-		/* Output-activity reporting to the apply policy (M3 follow-up). */
+		SetOutputActive(false);
 		break;
 	default:
 		break;
@@ -48,6 +51,7 @@ void Load()
 	/* Force the obs-free ABI object into the module's export table so
 	 * obs_onvif_get_abi is resolvable by external consumers. */
 	(void)obs_onvif_get_abi();
+	SyncApplyPolicySources();
 	hotkeys::RegisterPresetHotkeys();
 	hotkeys::RegisterMoveHotkeys();
 	obs_frontend_add_event_callback(OnFrontendEvent, nullptr);
