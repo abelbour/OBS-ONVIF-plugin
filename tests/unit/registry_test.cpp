@@ -228,6 +228,7 @@ static void LiveSeed(int argc, char **argv)
 		STAGE("device info");
 		OnvifClient cl(base, "admin", "pass");
 		const DeviceInfo info = cl.GetDeviceInformation();
+		cl.GetCapabilities(); // needed before GetStreamUri (media XAddr)
 		DeviceIdentity id;
 		id.serialNumber = info.serialNumber;
 		id.hardwareId = info.hardwareId;
@@ -304,6 +305,7 @@ static void LiveRehome(int argc, char **argv)
 		STAGE("device info + stream uri");
 		OnvifClient cl(base, "admin", "pass");
 		const DeviceInfo info = cl.GetDeviceInformation();
+		cl.GetCapabilities(); // needed before GetStreamUri (media XAddr)
 		DeviceIdentity id;
 		id.serialNumber = info.serialNumber;
 		id.hardwareId = info.hardwareId;
