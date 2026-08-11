@@ -209,8 +209,6 @@ bool Store::LoadAppConfig(AppConfig &cfg) const
 		cfg.apply_policy = policy;
 	if (j.value("default_stream", std::string()) == "low")
 		cfg.default_stream = StreamChoice::Low;
-	cfg.preset_hotkeys_prebound =
-		j.value("preset_hotkeys_prebound", cfg.preset_hotkeys_prebound);
 	cfg.restore_settings_on_reconnect =
 		j.value("restore_settings_on_reconnect",
 			cfg.restore_settings_on_reconnect);
@@ -229,7 +227,6 @@ bool Store::SaveAppConfig(const AppConfig &cfg) const
 	       {"apply_policy", PolicyToString(cfg.apply_policy)},
 	       {"default_stream",
 		cfg.default_stream == StreamChoice::High ? "high" : "low"},
-	       {"preset_hotkeys_prebound", cfg.preset_hotkeys_prebound},
 	       {"restore_settings_on_reconnect",
 		cfg.restore_settings_on_reconnect}};
 	return SaveJson(DirOf(config_dir_) / "config.json", j);

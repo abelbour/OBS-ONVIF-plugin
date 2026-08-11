@@ -22,7 +22,7 @@ A Windows-native OBS Studio plugin that:
 - Source mapping: **auto-suggest by parsing the Media Source RTSP URL host/IP → camera, with user confirmation**. Multiple sources pointing at one camera are each mapped and tracked separately (main/sub streams across scenes).
 - Live-output policy: **when a camera is live during stream/record and its IP moves → ask the user** (dialog: Apply now / Defer / Ignore, with a "remember my choice" option). When no output is active, apply automatically without prompting.
 - PTZ inputs: **hotkeys + keyboard/focus buttons**. No joystick inside our plugin — external control (joysticks, other plugins) is exposed via a **public plugin ABI**: `obs-onvif.h` exporting a function-pointer struct, `get_sym_addr`-compatible, addressable by camera ID or name. It exposes **PTZ moves** (`move/stop`), the **full preset set** (`goto_preset`, `save_preset` (capture-as-new), `list_presets`, `rename_preset`, `delete_preset`, `get_current_preset`), and **scene→preset bindings read+write** (`get_bindings`, `set_binding`, `clear_binding`). We export the ABI only; never link to other plugins (Advanced Scene Switcher can drive PTZ and manage scene-preset bindings from macros).
-- ONVIF services in scope (v1): **Device** (identity, capabilities, network config), **Media + Media2** (profiles, stream URIs, encoder config), **PTZ** (moves, presets, home), **Imaging** (image panel), **Display** (text OSD: enable + overlay content). **Profile-selection rule:** prefer **Media2** (`Media2Profile`) when a camera exposes one; fall back to classic Media (`Profile`). StreamUri/encoder config for a given source always comes from the same service that owns its profile token. Explicitly **skipped**: Event, Receiver, Recording/Replay/Search, DeviceIO, Analytics/AnalyticsDevice/ActionEngine, Display metadata/PiP.
+- ONVIF services in scope (v1): **Device** (identity, capabilities, network config), **Media + Media2** (profiles, stream URIs, encoder config), **PTZ** (moves, presets, home), **Imaging** (image panel), **Display** (text OSD: enable + overlay content). **Profile-selection rule:** prefer **Media2** (`Media2Profile`) when a camera exposes one; fall back to classic Media (`Profile`). Media2 is only "preferred when clean": hybrid firmware sometimes advertises a Media2 endpoint but faults or returns incomplete stream URIs for specific profiles — such a profile resolves through classic Media, and a Media2 fault is **never** a hard failure. StreamUri/encoder config for a given source always comes from the same service that owns its profile token. Explicitly **skipped**: Event, Receiver, Recording/Replay/Search, DeviceIO, Analytics/AnalyticsDevice/ActionEngine, Display metadata/PiP.
 - Imaging panel v1: render **everything `GetOptions` reports**, plus day/night + backlight where exposed, plus **video encoder settings** (bitrate/resolution/framerate/quality via Media service) — full camera-config panel. Edits are applied via an **explicit Apply button** (batches one SetImagingSettings/SetEncoderConfig), never auto-sent per widget.
 - Config panel beyond image/stream: **Network tab** (full IPv4/DHCP + subnet/gateway + DNS + NTP + hostname via Device service) and **OSD tab** (date/time + text overlays via Display service), batched into one `SetNetworkInterface/SetNTP/SetHostname` (or `SetSystemDateAndTime`) + `SetOSDOptions` Apply. **Camera-destabilizing warning:** changing IP/gateway can drop the feed mid-use — the Apply confirmation must warn, and the auto-repair flow (identity-based re-discovery) is what brings it back.
 - Transport: **HTTPS supported via Win32 Schannel** (bundled OS, no OpenSSL dep), TLS 1.2+; certificate validation off-by-default with a per-camera warning toggle (cameras' self-signed certs standard). HTTP remains the default; XAddr scheme from `GetCapabilities` is honored.
@@ -201,7 +201,11 @@ command path only**:
   capability+profile re-resolution currently costs — the dominant latency lever.
 - **HTTP keep-alive / connection reuse** (`soap_keepalive`): reuse a WinHTTP
   connection keyed by (scheme, host, port) across SOAP calls instead of a fresh
-  TCP/TLS handshake per request. Off ⇒ legacy per-call connection.
+  TCP/TLS handshake per request. Off ⇒ legacy per-call connection. Low-end
+  camera servers routinely drop idle persistent connections, so the transport
+  must detect a stale pooled connection (send/receive failure, WSAECONNRESET)
+  and **retry the request once on a fresh connection** before surfacing a
+  transport error.
 - **Auth-mode cache** (`ptz_auth_cache`): WS-Security UsernameToken stays
   per-request (a fresh client nonce+created is mandatory for replay protection —
   WS-Security has no reusable server nonce; HTTP Digest is out of scope). Cache
@@ -256,7 +260,7 @@ AppConfig {
   soap_timeout_s(5), soap_retry_media(once), discovery_probe_timeout_s(3),
   apply_policy(ask|always|ignore), prompt_timeout_s(30),
   default_stream(high|low),   // high by default
-  preset_hotkeys_prebound(true), restore_settings_on_reconnect(false),
+  restore_settings_on_reconnect(false),
   // PTZ transport/motor control (M4) — all default-on:
   soap_keepalive(true),           // reuse WinHTTP connection across SOAP calls
   ptz_auth_cache(true),           // cache negotiated auth mode per camera

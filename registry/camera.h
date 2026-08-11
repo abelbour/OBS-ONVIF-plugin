@@ -55,7 +55,6 @@ struct AppConfig {
 	int prompt_timeout_s = 30;
 	ApplyPolicyChoice apply_policy = ApplyPolicyChoice::Ask;
 	StreamChoice default_stream = StreamChoice::High;
-	bool preset_hotkeys_prebound = true;
 	bool restore_settings_on_reconnect = false;
 };
 

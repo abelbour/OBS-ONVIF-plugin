@@ -457,7 +457,6 @@ struct AppConfig {
     int prompt_timeout_s = 30;
     std::string apply_policy = "ask";       // ask | always | ignore
     std::string default_stream = "high";    // high | low
-    bool preset_hotkeys_prebound = true;
     bool restore_settings_on_reconnect = false;
     // PTZ transport/motor control (M4, §6.8) — all default-on:
     bool soap_keepalive = true;            // reuse WinHTTP connection across calls
@@ -709,25 +708,17 @@ The scene→preset dialog binds either an existing preset or calls `SetPreset(na
 
 ### 6.5 Hotkeys — `obs/hotkeys.{h,cpp}`
 
-Implemented with the public `obs_hotkey_register_frontend` API (no prebinding, user assigns keys in OBS Settings → Hotkeys). PTZ blocking calls run on a detached worker via a templated `FireAsync` (bare function pointers could not capture). Pre-bind Ctrl+Alt+1..9 via `obs-internal.h` as obs-ptz does:
+Implemented with the public `obs_hotkey_register_frontend` API only — no pre-binding and no `obs-internal.h`. Users assign keys in OBS Settings → Hotkeys; this avoids coupling to private OBS internals that can shift across minor release bumps. PTZ blocking calls run on a detached worker via a templated `FireAsync` (bare function pointers could not capture):
 
 ```cpp
-#include <obs-internal.h>   // obs_hotkey_binding_t / set_combos
-
-void RegisterPresetHotkeys(bool prebind /* from AppConfig */)
+// hotkeys.cpp — public API only (matches the shipped implementation)
+void RegisterPresetHotkeys()
 {
     for (int i = 1; i <= 9; ++i) {
         std::string id = "obs-onvif.preset_" + std::to_string(i);
-        obs_hotkey_id_t hk = obs_hotkey_register_frontend(
-            nullptr, id.c_str(), ("ONVIF Preset " + std::to_string(i)).c_str(),
+        obs_hotkey_register_frontend(
+            id.c_str(), ("ONVIF Preset " + std::to_string(i)).c_str(),
             OnPresetHotkey, (void*)(intptr_t)i);
-        if (prebind) {
-            obs_hotkey_binding_t *b = obs_hotkey_bind(hk);
-            obs_key_combination_t combo{};
-            combo.modifiers = INTERACT_CONTROL_KEY | INTERACT_ALT_KEY;
-            combo.key = (obs_key_t)(OBS_KEY_1 + i - 1);
-            obs_hotkey_binding_set_combos(b, &combo, 1);
-        }
     }
 }
 
@@ -812,9 +803,9 @@ Qt6 widgets built under `obs/`. Dock = camera dropdown + LED, PTZ pad (velocity 
 
 Background and governing decisions in PLAN.md §PTZ command transport & motor control. Implements the mitigations for the **PTZ move/stop path only**:
 
-- **Connection pool + keep-alive** (`soap_client`): cache `WinHttpConnect` handles keyed by `(scheme, host, port)` and reuse them across SOAP calls (`Connection: keep-alive`, HTTP/1.1); closed on `Shutdown`. Gated by `AppConfig::soap_keepalive` (off ⇒ per-call connection, today's behavior). The response-read loop must handle HTTP/1.1 chunked/keep-alive semantics.
+- **Connection pool + keep-alive** (`soap_client`): cache `WinHttpConnect` handles keyed by `(scheme, host, port)` and reuse them across SOAP calls (`Connection: keep-alive`, HTTP/1.1); closed on `Shutdown`. Gated by `AppConfig::soap_keepalive` (off ⇒ per-call connection, today's behavior). The response-read loop must handle HTTP/1.1 chunked/keep-alive semantics. **Stale-connection recovery:** low-end cameras drop idle pooled connections, so a send/receive failure on a pooled connection (WinHTTP error, WSAECONNRESET) must close that connection and **retry the request once on a fresh connection** before surfacing a transport error.
 - **Auth-mode cache** (`soap_client`): per-camera `{wsse, basic}` remembered from the first successful exchange; subsequent requests send the accepted mode first (no 401→retry on Basic-only cameras). Gated by `AppConfig::ptz_auth_cache`. WS-Security tokens remain freshly generated per request (client nonce+created — no reusable server nonce).
-- **Profile/service cache** (`worker`): cache the camera's first `MediaProfile` (video-source/encoder/PTZ tokens) + resolved service URLs after `GetCapabilities`; `FirstProfile*`/config ops read the cache and refresh on SOAP error or TTL. Removes the 2 RTTs + 2 connections per command today's re-resolution costs.
+- **Profile/service cache** (`worker`): cache the camera's first `MediaProfile` (video-source/encoder/PTZ tokens) + resolved service URLs after `GetCapabilities`; `FirstProfile*`/config ops read the cache and refresh on SOAP error or TTL. Removes the 2 RTTs + 2 connections per command today's re-resolution costs. **Media2 fallback safety:** profile/stream-URI resolution is classic-Media-first today and stays v1-first even once Media2 is used; if a Media2 request faults or returns an incomplete stream URI for a profile, that profile resolves through classic Media and the cache must not treat the Media2 fault as a hard failure (PLAN.md §Profile-selection rule).
 - **Template bodies + void-op skip** (`onvif_client`): `ContinuousMove`/`Stop` bodies built by `snprintf`-style fixed-buffer injection (velocity values only); void-op responses skip TinyXML2 body parsing (transport/fault handled by the HTTP layer).
 - **`registry::PtzController`** (OBS-free, unit-testable): a single worker thread owns PTZ SOAP dispatch —
   - queue depth 1; a move arriving while one is in-flight only updates `pending_vector` (latest wins, intermediates discarded);
