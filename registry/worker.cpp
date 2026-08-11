@@ -325,6 +325,9 @@ bool Worker::SetOSD(const Camera &cam, const obs_onvif::OSDConfig &cfg,
 		    std::string &err)
 {
 	auto client = BuildClient(cam);
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
+		return false; // also populates the display service URL
 	obs_onvif::OSDConfig toSet = cfg;
 	if (toSet.token.empty())
 		toSet.token = "osd1"; // device may reassign; kept stable here
@@ -337,6 +340,9 @@ bool Worker::DeleteOSD(const Camera &cam, const std::string &osdToken,
 		       std::string &err)
 {
 	auto client = BuildClient(cam);
+	obs_onvif::MediaProfile profile;
+	if (!ResolveProfile(client, profile, err))
+		return false; // also populates the display service URL
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
 		c.DeleteOSD(osdToken);
 	}, err);
