@@ -2,6 +2,7 @@ add_library(registry_lib STATIC
 	apply.cpp
 	registry.cpp
 	store.cpp
+	worker.cpp
 )
 
 target_include_directories(registry_lib PUBLIC

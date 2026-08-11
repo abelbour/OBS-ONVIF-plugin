@@ -17,10 +17,13 @@ add_subdirectory(onvif)
 
 add_subdirectory(registry)
 
+add_subdirectory(obs)
+
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
 find_package(libobs REQUIRED)
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs onvif_core registry_lib)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs onvif_core registry_lib obs_abi)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/obs")
 
 if(ENABLE_FRONTEND_API)
   find_package(obs-frontend-api REQUIRED)

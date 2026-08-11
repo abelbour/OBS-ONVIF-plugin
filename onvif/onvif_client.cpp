@@ -1,6 +1,8 @@
 #include "onvif_client.h"
 
+#include <cstdio>
 #include <stdexcept>
+#include <utility>
 
 #include "soap_client.h"
 #include "ws_security.h"
@@ -50,6 +52,44 @@ const char *Attr(const tinyxml2::XMLElement *el, const char *name)
 	const char *value = el ? el->Attribute(name) : nullptr;
 	return value ? value : "";
 }
+
+// Serializes a normalized PTZ velocity/coordinate with fixed precision so the
+// result is locale-independent ("-0.250", not "-0,250").
+std::string FormatCoord(double v)
+{
+	char buf[32];
+	std::snprintf(buf, sizeof(buf), "%.3f", v);
+	return buf;
+}
+
+// Minimal XML-escape for user-supplied text inside envelope bodies.
+std::string EscapeXml(const std::string &s)
+{
+	std::string out;
+	out.reserve(s.size());
+	for (char c : s) {
+		switch (c) {
+		case '&':
+			out += "&amp;";
+			break;
+		case '<':
+			out += "&lt;";
+			break;
+		case '>':
+			out += "&gt;";
+			break;
+		default:
+			out += c;
+		}
+	}
+	return out;
+}
+
+// PTZ service URL authority rewrite uses the same media/PTZ pattern.
+const char *kVelocityPanTiltSpace =
+	"http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace";
+const char *kVelocityZoomSpace =
+	"http://www.onvif.org/ver10/tptz/ZoomSpaces/VelocityGenericSpace";
 
 } // namespace
 
@@ -271,6 +311,140 @@ void OnvifClient::GotoPreset(const std::string &profileToken,
 	tinyxml2::XMLDocument doc;
 	if (!xml::Parse(body, doc))
 		throw std::runtime_error("GotoPreset: malformed response");
+	(void)doc;
+}
+
+std::string OnvifClient::SetPreset(const std::string &profileToken,
+				   const std::string &presetName)
+{
+	const std::string reqBody =
+		"<trt:SetPreset><trt:ProfileToken>" + profileToken +
+		"</trt:ProfileToken><trt:PresetName>" +
+		EscapeXml(presetName) + "</trt:PresetName></trt:SetPreset>";
+
+	const std::string body = PostOperation(
+		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/SetPreset",
+		"trt", kPtzNs, reqBody);
+
+	tinyxml2::XMLDocument doc;
+	if (!xml::Parse(body, doc))
+		throw std::runtime_error("SetPreset: malformed response");
+	const tinyxml2::XMLElement *env = doc.RootElement();
+	const tinyxml2::XMLElement *resp =
+		env ? xml::Child(xml::Child(env, "Body"), "SetPresetResponse")
+		    : nullptr;
+	if (!resp)
+		throw std::runtime_error("SetPreset: missing response element");
+	return xml::ChildText(resp, "PresetToken");
+}
+
+std::vector<Preset> OnvifClient::GetPresets(const std::string &profileToken)
+{
+	const std::string reqBody = "<trt:GetPresets><trt:ProfileToken>" +
+				    profileToken +
+				    "</trt:ProfileToken></trt:GetPresets>";
+
+	const std::string body = PostOperation(
+		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/GetPresets",
+		"trt", kPtzNs, reqBody);
+
+	tinyxml2::XMLDocument doc;
+	if (!xml::Parse(body, doc))
+		throw std::runtime_error("GetPresets: malformed response");
+	const tinyxml2::XMLElement *env = doc.RootElement();
+	const tinyxml2::XMLElement *resp =
+		env ? xml::Child(xml::Child(env, "Body"), "GetPresetsResponse")
+		    : nullptr;
+	if (!resp)
+		throw std::runtime_error("GetPresets: missing response element");
+
+	std::vector<Preset> presets;
+	for (const tinyxml2::XMLElement *p : xml::Children(resp, "Preset")) {
+		Preset pr;
+		pr.token = Attr(p, "token");
+		pr.name = xml::ChildText(p, "Name");
+		presets.push_back(std::move(pr));
+	}
+	return presets;
+}
+
+void OnvifClient::RenamePreset(const std::string &profileToken,
+			       const std::string &presetToken,
+			       const std::string &newName)
+{
+	const std::string reqBody =
+		"<trt:RenamePreset><trt:ProfileToken>" + profileToken +
+		"</trt:ProfileToken><trt:PresetToken>" + presetToken +
+		"</trt:PresetToken><trt:NewName>" + EscapeXml(newName) +
+		"</trt:NewName></trt:RenamePreset>";
+
+	const std::string body = PostOperation(
+		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/RenamePreset",
+		"trt", kPtzNs, reqBody);
+
+	tinyxml2::XMLDocument doc;
+	if (!xml::Parse(body, doc))
+		throw std::runtime_error("RenamePreset: malformed response");
+	(void)doc;
+}
+
+void OnvifClient::DeletePreset(const std::string &profileToken,
+			       const std::string &presetToken)
+{
+	const std::string reqBody =
+		"<trt:DeletePreset><trt:ProfileToken>" + profileToken +
+		"</trt:ProfileToken><trt:PresetToken>" + presetToken +
+		"</trt:PresetToken></trt:DeletePreset>";
+
+	const std::string body = PostOperation(
+		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/DeletePreset",
+		"trt", kPtzNs, reqBody);
+
+	tinyxml2::XMLDocument doc;
+	if (!xml::Parse(body, doc))
+		throw std::runtime_error("DeletePreset: malformed response");
+	(void)doc;
+}
+
+void OnvifClient::ContinuousMove(const std::string &profileToken, double pan,
+				 double tilt, double zoom,
+				 double timeoutSeconds)
+{
+	const std::string reqBody =
+		"<trt:ContinuousMove><trt:ProfileToken>" + profileToken +
+		"</trt:ProfileToken><trt:Velocity><tt:PanTilt x=\"" +
+		FormatCoord(pan) + "\" y=\"" + FormatCoord(tilt) +
+		"\" space=\"" + kVelocityPanTiltSpace + "\"/><tt:Zoom x=\"" +
+		FormatCoord(zoom) + "\" space=\"" + kVelocityZoomSpace +
+		"\"/></trt:Velocity><trt:Timeout>PT0H0M" +
+		FormatCoord(timeoutSeconds) +
+		"S</trt:Timeout></trt:ContinuousMove>";
+
+	const std::string body = PostOperation(
+		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/ContinuousMove",
+		"trt", kPtzNs, reqBody);
+
+	tinyxml2::XMLDocument doc;
+	if (!xml::Parse(body, doc))
+		throw std::runtime_error(
+			"ContinuousMove: malformed response");
+	(void)doc;
+}
+
+void OnvifClient::Stop(const std::string &profileToken)
+{
+	const std::string reqBody =
+		"<trt:Stop><trt:ProfileToken>" + profileToken +
+		"</trt:ProfileToken><trt:PanTilt>true</trt:PanTilt>"
+		"<trt:Zoom>true</trt:Zoom></trt:Stop>";
+
+	const std::string body = PostOperation(
+		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/Stop", "trt",
+		kPtzNs, reqBody);
+
+	tinyxml2::XMLDocument doc;
+	if (!xml::Parse(body, doc))
+		throw std::runtime_error("Stop: malformed response");
 	(void)doc;
 }
 

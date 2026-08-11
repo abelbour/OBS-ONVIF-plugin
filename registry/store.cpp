@@ -148,6 +148,17 @@ bool Store::LoadCollection(const std::string &uuid, CollectionState &out) const
 			out.mappings.push_back(std::move(sm));
 		}
 	}
+	out.scene_presets.clear();
+	if (j.contains("scene_presets") && j["scene_presets"].is_array()) {
+		for (const auto &sp : j["scene_presets"]) {
+			ScenePreset p;
+			p.collection_uuid = uuid;
+			p.scene_name = sp.value("scene", std::string());
+			p.camera_id = sp.value("camera_id", std::string());
+			p.preset_token = sp.value("preset", std::string());
+			out.scene_presets.push_back(std::move(p));
+		}
+	}
 	return true;
 }
 
@@ -160,10 +171,16 @@ bool Store::SaveCollection(const CollectionState &cs) const
 			       {"camera_id", m.camera_id},
 			       {"profile", m.profileToken},
 			       {"auto_apply", m.auto_apply}});
+	json scenes = json::array();
+	for (const auto &p : cs.scene_presets)
+		scenes.push_back({{"scene", p.scene_name},
+				  {"camera_id", p.camera_id},
+				  {"preset", p.preset_token}});
 	return SaveJson(DirOf(config_dir_) / ("collection_" + cs.uuid + ".json"),
 			json{{"uuid", cs.uuid},
 			     {"display_name", cs.display_name},
-			     {"camera_mappings", arr}});
+			     {"camera_mappings", arr},
+			     {"scene_presets", scenes}});
 }
 
 bool Store::RemoveCollection(const std::string &uuid) const

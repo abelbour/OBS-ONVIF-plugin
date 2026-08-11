@@ -64,6 +64,7 @@ struct CollectionState {
 	std::string uuid;
 	std::string display_name;
 	std::vector<SourceMapping> mappings;
+	std::vector<ScenePreset> scene_presets;
 };
 
 } // namespace obs_onvif::registry

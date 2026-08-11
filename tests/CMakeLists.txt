@@ -83,4 +83,21 @@ if(BUILD_TESTING)
 				$<TARGET_FILE:registry_live_test>
 		)
 	endif()
+
+	# Public ABI (M3): a C consumer links the obs-free ABI core and drives
+	# get_camera_list / presets / moves / scene-bindings against the mock.
+	# The driver also asserts the built plugin module exports
+	# obs_onvif_get_abi via its .exp file. Needs a build of the module.
+	if(Python3_FOUND)
+		add_executable(aclink aclink/aclink_main.c ../obs/abi_test.cpp)
+		set_target_properties(aclink PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+		target_link_libraries(aclink PRIVATE obs_abi)
+		add_test(
+			NAME aclink
+			COMMAND ${Python3_EXECUTABLE}
+				${CMAKE_CURRENT_SOURCE_DIR}/run_aclink_test.py
+				$<TARGET_FILE:aclink>
+				${CMAKE_BINARY_DIR}
+		)
+	endif()
 endif()

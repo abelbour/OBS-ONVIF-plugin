@@ -71,6 +71,8 @@ static void TestCollectionRoundTrip()
 		{"col-1", "CAM-101", "sn:123", "profile1", true});
 	cs.mappings.push_back(
 		{"col-1", "CAM-102", "sn:456", "profile2", false});
+	cs.scene_presets.push_back(
+		{"col-1", "Main", "sn:123", "preset1"});
 
 	CHECK(store.SaveCollection(cs));
 
@@ -83,6 +85,10 @@ static void TestCollectionRoundTrip()
 	CHECK_EQ(out.mappings[0].profileToken, std::string("profile1"));
 	CHECK_EQ(out.mappings[0].auto_apply, true);
 	CHECK_EQ(out.mappings[1].auto_apply, false);
+	CHECK_EQ(out.scene_presets.size(), size_t(1));
+	CHECK_EQ(out.scene_presets[0].scene_name, std::string("Main"));
+	CHECK_EQ(out.scene_presets[0].camera_id, std::string("sn:123"));
+	CHECK_EQ(out.scene_presets[0].preset_token, std::string("preset1"));
 
 	CHECK(store.RemoveCollection("col-1"));
 	CHECK(!store.LoadCollection("col-1", out)); // gone

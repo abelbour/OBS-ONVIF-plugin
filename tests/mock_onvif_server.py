@@ -25,6 +25,7 @@ ENV = "http://schemas.xmlsoap.org/soap/envelope/"
 TDS = "http://www.onvif.org/ver10/device/wsdl"
 TRT = "http://www.onvif.org/ver10/media/wsdl"
 TT = "http://www.onvif.org/ver10/schema"
+TTPTZ = "http://www.onvif.org/ver20/ptz/wsdl"
 
 DEVICE_INFO_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
 <env:Envelope xmlns:env="{ENV}" xmlns:tds="{TDS}" xmlns:tt="{TT}">
@@ -99,6 +100,32 @@ GOTO_PRESET_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
   </env:Body>
 </env:Envelope>"""
 
+
+def _ptz_empty_response(op_name):
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:ttptz="{TTPTZ}">'
+            f"<env:Body><ttptz:{op_name}/></env:Body></env:Envelope>")
+
+
+def _ptz_presets_response(presets):
+    rows = "\n".join(
+        f'<ttptz:PTZPreset token="{p["token"]}">'
+        f'<tt:Name>{p["name"]}</tt:Name></ttptz:PTZPreset>'
+        for p in presets
+    )
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:ttptz="{TTPTZ}" '
+            f'xmlns:tt="{TT}"><env:Body><ttptz:GetPresetsResponse>{rows}'
+            "</ttptz:GetPresetsResponse></env:Body></env:Envelope>")
+
+
+def _ptz_set_preset_response(preset_token):
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:ttptz="{TTPTZ}">'
+            "<env:Body><ttptz:SetPresetResponse>"
+            f"<ttptz:PresetToken>{preset_token}</ttptz:PresetToken>"
+            "</ttptz:SetPresetResponse></env:Body></env:Envelope>")
+
 FAULT_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
 <env:Envelope xmlns:env="{ENV}">
   <env:Body>
@@ -157,7 +184,11 @@ def _verify_digest(body, username, password):
 
 
 class OnvifMock:
-    """Stateless request router; shared by the handler and the ctest launcher."""
+    """Stateful request router; shared by the handler and the ctest launcher.
+
+    PTZ presets live in `self.presets` so the lifecycle (save/list/rename/
+    delete) round-trips against a real state instead of canned responses.
+    """
 
     def __init__(self, auth="digest", username="admin", password="pass",
                  basic_required=False, rtsp_host="127.0.0.1"):
@@ -166,6 +197,32 @@ class OnvifMock:
         self.password = password
         self.basic_required = basic_required  # digest-off when True
         self.rtsp_host = rtsp_host  # host in GetStreamUri replied URIs
+        self.presets = [{"token": "preset1", "name": "Home"}]
+
+    def _handle_ptz(self, body):
+        if "GetPresets" in body:
+            return (200, _ptz_presets_response(self.presets))
+        if "SetPreset" in body:
+            name = _grab_tag(body, "PresetName") or "preset"
+            token = "preset%d" % (len(self.presets) + 1)
+            self.presets.append({"token": token, "name": name})
+            return (200, _ptz_set_preset_response(token))
+        if "RenamePreset" in body:
+            token = _grab_tag(body, "PresetToken")
+            new_name = _grab_tag(body, "NewName")
+            for p in self.presets:
+                if p["token"] == token:
+                    p["name"] = new_name
+            return (200, _ptz_empty_response("RenamePresetResponse"))
+        if "DeletePreset" in body:
+            token = _grab_tag(body, "PresetToken")
+            self.presets = [p for p in self.presets if p["token"] != token]
+            return (200, _ptz_empty_response("DeletePresetResponse"))
+        if "ContinuousMove" in body:
+            return (200, _ptz_empty_response("ContinuousMoveResponse"))
+        if "Stop" in body:
+            return (200, _ptz_empty_response("StopResponse"))
+        return None
 
     def handle(self, body, headers):
         # 1. Authentication gate -------------------------------------------------
@@ -181,7 +238,12 @@ class OnvifMock:
             if header != expected:
                 return (401, UNAUTHORIZED_RESPONSE)
 
-        # 2. Route by operation marker -------------------------------------------
+        # 2. Stateful PTZ operations --------------------------------------------
+        ptz = self._handle_ptz(body)
+        if ptz is not None:
+            return ptz
+
+        # 3. Stateless route by operation marker -------------------------------
         for marker, response in _routes(self.rtsp_host).items():
             if marker in body:
                 return (200, response)

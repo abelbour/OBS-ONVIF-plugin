@@ -35,6 +35,11 @@ struct StreamUriResult {
 	std::string timeout; // ISO-8601 duration, e.g. "PT30S"
 };
 
+struct Preset {
+	std::string token;
+	std::string name;
+};
+
 // Typed ONVIF device-service client on top of SoapClient. All operations are
 // WS-Security (UsernameToken digest) by default; when `allowBasicFallback` is
 // set (default) a rejected request is retried once with HTTP Basic auth.
@@ -63,6 +68,20 @@ public:
 	// PTZ service (http://www.onvif.org/ver20/ptz/wsdl).
 	void GotoPreset(const std::string &profileToken,
 			const std::string &presetToken);
+	// Captures the current position as a preset and returns its token
+	// (empty when the device returns none).
+	std::string SetPreset(const std::string &profileToken,
+			      const std::string &presetName);
+	std::vector<Preset> GetPresets(const std::string &profileToken);
+	void RenamePreset(const std::string &profileToken,
+			  const std::string &presetToken,
+			  const std::string &newName);
+	void DeletePreset(const std::string &profileToken,
+			  const std::string &presetToken);
+	// Velocity move (normalized -1..1 per axis) for ~timeoutSeconds.
+	void ContinuousMove(const std::string &profileToken, double pan,
+			    double tilt, double zoom, double timeoutSeconds);
+	void Stop(const std::string &profileToken);
 
 private:
 	// Sends one operation; throws std::runtime_error on transport failure or

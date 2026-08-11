@@ -69,6 +69,36 @@ int main(int argc, char **argv)
 	// PTZ service.
 	client.GotoPreset(profiles[0].token, "Home1");
 
+	// Preset lifecycle (the mock keeps real preset state).
+	auto presets0 = client.GetPresets(profiles[0].token);
+	CHECK_EQ(presets0.size(), size_t(1));
+	CHECK_EQ(presets0[0].token, std::string("preset1"));
+	CHECK_EQ(presets0[0].name, std::string("Home"));
+
+	const std::string newToken =
+		client.SetPreset(profiles[0].token, "WideAngle");
+	CHECK(!newToken.empty());
+	auto presets1 = client.GetPresets(profiles[0].token);
+	CHECK_EQ(presets1.size(), presets0.size() + 1);
+
+	client.RenamePreset(profiles[0].token, newToken, "Narrow");
+	client.GotoPreset(profiles[0].token, newToken);
+	auto renamed = client.GetPresets(profiles[0].token);
+	bool foundRenamed = false;
+	for (const auto &p : renamed) {
+		if (p.token == newToken)
+			foundRenamed = (p.name == "Narrow");
+	}
+	CHECK(foundRenamed);
+
+	client.DeletePreset(profiles[0].token, newToken);
+	auto presets2 = client.GetPresets(profiles[0].token);
+	CHECK_EQ(presets2.size(), presets0.size());
+
+	// Velocity moves + stop round-trip.
+	client.ContinuousMove(profiles[0].token, 0.1, -0.2, 0.05, 0.5);
+	client.Stop(profiles[0].token);
+
 	// Transport failure surfaces as an exception.
 	OnvifClient broken("http://127.0.0.1:1/onvif/device_service",
 			   "admin", "pass", true, false, 1000);
