@@ -546,7 +546,7 @@ int AGetNetworkInterfaces(const char *cam,
 			return -3;
 		const size_t n = nis.size();
 		auto *arr = (obs_cast_network_interface_t *)calloc(
-			n ? n : 1, sizeof *arr);
+			n ? n : 1, sizeof(obs_cast_network_interface_t));
 		if (!arr)
 			return -3;
 		for (size_t i = 0; i < n; ++i) {
@@ -602,7 +602,8 @@ int AGetOSDs(const char *cam, obs_cast_osd_config_t **out, int *count)
 		if (!w.OSDs(c, osds, err))
 			return -3;
 		const size_t n = osds.size();
-		auto *arr = (obs_cast_osd_config_t *)calloc(n ? n : 1, sizeof *arr);
+		auto *arr = (obs_cast_osd_config_t *)calloc(
+			n ? n : 1, sizeof(obs_cast_osd_config_t));
 		if (!arr)
 			return -3;
 		for (size_t i = 0; i < n; ++i) {
