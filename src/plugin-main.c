@@ -22,6 +22,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-onvif.h>
 #include <glue.h>
 
+OBS_DECLARE_MODULE()
+OBS_MODULE_USE_DEFAULT_LOCALE("obs-onvif", "en-US")
+
 bool obs_module_load(void)
 {
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);

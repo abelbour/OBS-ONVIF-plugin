@@ -571,10 +571,16 @@ All libobs/UI work happens on the OBS main thread; long SOAP dispatches are mars
 > `scene_presets.{h,cpp}` fires the bound camera preset on `OBS_FRONTEND_EVENT_SCENE_CHANGED` (dispatched to a worker thread, never the UI thread);
 > `hotkeys.{h,cpp}` registers preset (1–9) and PTZ move/stop hotkeys through the public `obs_hotkey_register_frontend` API (blocks on the worker via templated `FireAsync`);
 > `obs_mapping.{h,cpp}` discovers RTSP **Media Sources** (`ffmpeg_source` with `rtsp://` input) across the scene tree;
-> `obs_apply.{h,cpp}` owns the module's `registry::ApplyPolicy`, rewrites `input` + splices credentials via `registry::RewriteSourceUrl`, fires the ffmpeg `restart` proc, and turns output STARTED/STOPPED events into `OnOutputsIdle` re-offers on the last output going idle;
-> `obs-onvif.h` + `abi.{h,cpp}` export the public C ABI (`obs_onvif_get_abi`) and `obs_onvif_abi_init`.
-> **OBS 32.2.1 compatibility notes:** the `OBS*AutoRelease` RAII wrappers and `obs_current_module()` are **not** exported by libobs 32.2.1 — the code uses explicit `obs_data_release`/`obs_source_release`, and `obs_module_config_path` (a macro over `obs_current_module()`) is replaced by `obs_frontend_get_current_profile_path()` for the store root. The ffmpeg source's restart proc is `void restart()` via `proc_handler_call`.
-> **Not yet built (M3c):** the Qt settings dock (camera list, source mappings, preset management) and the Apply/Defer/Ignore prompt dialog with 30 s staleness timer. CI currently provisions only plugin obsdeps (no Qt); a dock requires adding a Qt6 install (aqtinstall) and toggling `ENABLE_QT`/`ENABLE_FRONTEND_API` in `.github/workflows/build.yml`. Continuous Hello/Bye discovery-listener + heartbeat loop (M2→M3 bridge) also remains open.
+> `obs_apply.{h,cpp}` owns the module's `registry::ApplyPolicy`, rewrites `input` + splices credentials via `registry::RewriteSourceUrl`, fires the ffmpeg `restart` proc, and turns output STARTED/STOPPED events into `OnOutputsIdle` re-offers on the last output going idle; `OnCameraMoved` is the worker-safe dispatch seam (policy → UI prompt / rewrite on the main thread) that the M2→M3 discovery bridge feeds; `SetStoreContext`/`ReseedApplyState` keep the policy mapping table in sync with the current scene collection;
+> `obs-onvif.h` + `abi.{h,cpp}` export the public C ABI (`obs_onvif_get_abi`) and `obs_onvif_abi_init` (the plugin wires Store + wincred providers);
+> `apply_prompt.{h,cpp}` shows the Apply/Defer/Ignore dialog (30 s auto-defer countdown, "remember my choice"; resolves through the policy, rewrites applied on the main thread);
+> `dock.{h,cpp}` adds the ONVIF Control dock (`obs_frontend_add_dock_by_id` + Tools-menu toggle) with Cameras / Source Mapping / Presets / Apply Policy tabs, and reads/writes the per-collection Store.
+>
+> **OBS 32.2.1 compatibility notes:** the `OBS*AutoRelease` RAII wrappers and `obs_current_module()` are **not** exported by libobs 32.2.1 — the code uses explicit `obs_data_release`/`obs_source_release`, and `obs_module_config_path` (a macro over `obs_current_module()`) is replaced by `obs_frontend_get_current_profile_path()` for the store root. The ffmpeg source's restart proc is `void restart()` via `proc_handler_call`. `obs_frontend_add_dock_by_id` wraps the content widget in its own `OBSDock`.
+>
+> **Qt on CI:** Qt6 needs no extra provisioning — `buildspec` already pulls pre-built obs-deps Qt6 into `.deps/` and `obs-build.yml`'s configure appends it to `CMAKE_PREFIX_PATH`. M3c turned `ENABLE_QT` on for the `windows-x64` preset; the module then links `Qt6::Core`/`Qt6::Widgets`, sets `AUTOMOC`, and compiles `apply_prompt.cpp`/`dock.cpp` under the `ENABLE_QT` definition.
+>
+> **M3c status:** done and CI-green (dock + Apply prompt). **Not yet built:** the M3f dock follow-up work — PTZ pad (velocity buttons), camera Config panel (Image/Stream/OSD/Network tabs, needs the capabilities cache), and the full settings dialog; plus the continuous Hello/Bye discovery-listener + heartbeat loop (M2→M3 bridge) that actually raises `OnCameraMoved`. The plugin's live camera table currently comes from the persisted `cameras.json` snapshot via the Store provider.
 
 ### 6.1 Source mapping — `obs/obs_mapping.{h,cpp}`
 
@@ -785,6 +791,8 @@ OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void);
 ### 6.7 Dock + settings dialog — `obs/dock.{h,cpp}`, `obs/settings_dialog.{h,cpp}`
 
 Qt6 widgets built under `obs/`. Dock = camera dropdown + LED, PTZ pad (velocity buttons, stop-on-release), zoom/focus, preset table, "Set preset for current scene", Config panel with Image/Stream/OSD/Network tabs (all widget ranges from cached `GetOptions`; single Apply button batches the SOAP set). Settings dialog tabs: Cameras / Sources / Scenes / Config defaults / Discovery / Log / About.
+
+> **M3c implemented:** the control dock currently ships four settings tabs — **Cameras** (name / online / XAddr snapshot), **Source Mapping** (RTSP Media Sources in the scene tree ↔ camera assignment + auto-apply, persisted through `Store.SaveCollection` per collection and re-seeded into the apply policy), **Presets** (list / save / go-to / rename / delete on worker threads), and **Apply Policy** (default policy persisted to `config.json`, remembered per-camera overrides replayed). The PTZ pad, "Set preset for current scene", and the Image/Stream/OSD/Network Config panel remain M3f (they depend on the capabilities cache from the M2→M3 discovery bridge).
 
 ---
 

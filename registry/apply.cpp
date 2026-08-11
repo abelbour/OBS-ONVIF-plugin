@@ -251,4 +251,16 @@ const std::string &ApplyPolicy::DeferredCamera() const
 	return deferred_ ? deferred_->camera_id : kNoCamera;
 }
 
+std::vector<std::string> ApplyPolicy::PendingSources() const
+{
+	std::vector<std::string> names;
+	if (!pending_)
+		return names;
+	for (const auto &m : mappings_) {
+		if (m.camera_id == pending_->camera_id && m.auto_apply)
+			names.push_back(m.source_name);
+	}
+	return names;
+}
+
 } // namespace obs_onvif::registry

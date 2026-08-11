@@ -38,4 +38,25 @@ obs_onvif::registry::ApplyPolicy &ApplyPolicyInstance();
 /* Rebuilds the policy's source-URL mirror from the OBS session tree. */
 void SyncApplyPolicySources();
 
+/* Configures the per-scene-collection store root and the active collection
+ * used by the settings dock (persisted SourceMappings) and the apply policy.
+ * Called by glue when the ABI config changes. */
+void SetStoreContext(const std::string &config_dir,
+		     const std::string &collection);
+const std::string &ConfigDir();
+const std::string &SceneCollection();
+
+/* Re-seeds the apply policy's mapping table + source-URL mirror from the
+ * current collection's persisted SourceMappings and the live session tree.
+ * Call after the settings dock saves mappings or the collection changes. */
+void ReseedApplyState();
+
+/* Feed from the discovery listener (M2→M3 bridge): a camera's stream URI
+ * changed. Runs the apply policy and marshals prompt/rewrites to the OBS main
+ * thread (worker-safe). `credentials` is a URL-encoded "user:pass" to splice
+ * (may be empty). */
+void OnCameraMoved(const std::string &camera_id,
+		   const std::string &new_stream_uri,
+		   const std::string &credentials);
+
 } // namespace obs_onvif::glue

@@ -86,6 +86,11 @@ public:
 	const std::string &PendingCamera() const;
 	const std::string &DeferredCamera() const;
 
+	// Source names that a pending incident would rewrite (empty when there
+	// is no pending incident or nothing is mapped). Read-only helper for the
+	// Apply/Defer/Ignore prompt UI.
+	std::vector<std::string> PendingSources() const;
+
 private:
 	struct Incident {
 		std::string camera_id;

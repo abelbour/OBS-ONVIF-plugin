@@ -1,8 +1,12 @@
 #include "obs_apply.h"
 
+#include <utility>
+
 #include <obs-module.h>
 
+#include "apply_prompt.h"
 #include "obs_mapping.h"
+#include "store.h"
 
 namespace obs_onvif::glue {
 
@@ -20,11 +24,54 @@ int &OutputCount()
 	return n;
 }
 
+std::string &StoreConfigDir()
+{
+	static std::string dir;
+	return dir;
+}
+
+std::string &StoreCollection()
+{
+	static std::string uuid;
+	return uuid;
+}
+
 } // namespace
 
 obs_onvif::registry::ApplyPolicy &ApplyPolicyInstance()
 {
 	return Policy();
+}
+
+void SetStoreContext(const std::string &config_dir,
+		     const std::string &collection)
+{
+	StoreConfigDir() = config_dir;
+	StoreCollection() = collection;
+	ReseedApplyState();
+}
+
+const std::string &ConfigDir()
+{
+	return StoreConfigDir();
+}
+
+const std::string &SceneCollection()
+{
+	return StoreCollection();
+}
+
+void ReseedApplyState()
+{
+	std::vector<obs_onvif::registry::SourceMapping> mappings;
+	if (!StoreCollection().empty()) {
+		obs_onvif::registry::Store store(ConfigDir());
+		obs_onvif::registry::CollectionState cs;
+		if (store.LoadCollection(StoreCollection(), cs))
+			mappings = cs.mappings;
+	}
+	Policy().TrackMappings(mappings);
+	SyncApplyPolicySources();
 }
 
 std::string SourceInputUrl(obs_source_t *src)
@@ -95,6 +142,45 @@ void SyncApplyPolicySources()
 {
 	for (const auto &r : DiscoverRtspSources())
 		Policy().TrackSourceUrl(r.name, r.url);
+}
+
+void OnCameraMoved(const std::string &camera_id,
+		   const std::string &new_stream_uri,
+		   const std::string &credentials)
+{
+	std::vector<obs_onvif::registry::SourceRewrite> rewrites;
+	const bool active = OutputCount() != 0;
+	const obs_onvif::registry::ApplyDecision decision = Policy().OnIpChange(
+		camera_id, new_stream_uri, active, credentials, rewrites);
+	switch (decision) {
+	case obs_onvif::registry::ApplyDecision::AppliedNow:
+		if (!rewrites.empty()) {
+			auto *payload = new std::vector<
+				obs_onvif::registry::SourceRewrite>(
+				std::move(rewrites));
+			obs_queue_task(OBS_TASK_UI,
+				       [](void *param) {
+					       auto *r = static_cast<
+						       std::vector<obs_onvif::
+								       registry::
+								       SourceRewrite>
+							       *>(param);
+					       ApplySourceRewrites(*r);
+					       delete r;
+				       },
+				       payload, false);
+		}
+		break;
+	case obs_onvif::registry::ApplyDecision::Prompted:
+#ifdef ENABLE_QT
+		obs_queue_task(OBS_TASK_UI,
+			       [](void *) { ShowApplyPrompt(); }, nullptr,
+			       false);
+#endif
+		break;
+	default:
+		break;
+	}
 }
 
 } // namespace obs_onvif::glue
