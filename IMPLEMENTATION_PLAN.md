@@ -414,9 +414,11 @@ std::string BuildFingerprint(const DeviceInformation &info,
 > live `registry_live` ctest that drives the mock end-to-end — a discovery
 > round-trip registers a camera, the mock re-binds to a new loopback host
 > (127.0.0.2), and the registry detects the move and rewrites the mapped source
-> URL with credentials spliced. Open follow-ups (M3): continuous
-> Hello/Bye listener + heartbeat loop threading, per-camera capabilities cache,
-> and the OBS-side dispatch.
+> URL with credentials spliced. Open follow-ups: continuous
+> Hello/Bye listener + heartbeat loop threading and per-camera capabilities
+> cache (M2→M3 bridge). The OBS-side dispatch is implemented in M3b
+> (`obs/obs_apply.cpp`: output-activity → `OnOutputsIdle`, URL rewrite +
+> `restart` proc).
 
 ### 5.1 Data model (mirrors PLAN.md §Data model)
 
@@ -564,6 +566,16 @@ applyNow():
 
 All libobs/UI work happens on the OBS main thread; long SOAP dispatches are marshaled to the worker and results come back by value.
 
+> **Status (2026-08):** M3b (libobs glue, OBS 32.2.1, Windows x64) implemented and CI-green. Lives in `obs/`:
+> `glue.{h,cpp}` wires the module (ABI config via `obs_onvif_abi_init`, frontend event dispatch, hotkey + scene→preset registration);
+> `scene_presets.{h,cpp}` fires the bound camera preset on `OBS_FRONTEND_EVENT_SCENE_CHANGED` (dispatched to a worker thread, never the UI thread);
+> `hotkeys.{h,cpp}` registers preset (1–9) and PTZ move/stop hotkeys through the public `obs_hotkey_register_frontend` API (blocks on the worker via templated `FireAsync`);
+> `obs_mapping.{h,cpp}` discovers RTSP **Media Sources** (`ffmpeg_source` with `rtsp://` input) across the scene tree;
+> `obs_apply.{h,cpp}` owns the module's `registry::ApplyPolicy`, rewrites `input` + splices credentials via `registry::RewriteSourceUrl`, fires the ffmpeg `restart` proc, and turns output STARTED/STOPPED events into `OnOutputsIdle` re-offers on the last output going idle;
+> `obs-onvif.h` + `abi.{h,cpp}` export the public C ABI (`obs_onvif_get_abi`) and `obs_onvif_abi_init`.
+> **OBS 32.2.1 compatibility notes:** the `OBS*AutoRelease` RAII wrappers and `obs_current_module()` are **not** exported by libobs 32.2.1 — the code uses explicit `obs_data_release`/`obs_source_release`, and `obs_module_config_path` (a macro over `obs_current_module()`) is replaced by `obs_frontend_get_current_profile_path()` for the store root. The ffmpeg source's restart proc is `void restart()` via `proc_handler_call`.
+> **Not yet built (M3c):** the Qt settings dock (camera list, source mappings, preset management) and the Apply/Defer/Ignore prompt dialog with 30 s staleness timer. CI currently provisions only plugin obsdeps (no Qt); a dock requires adding a Qt6 install (aqtinstall) and toggling `ENABLE_QT`/`ENABLE_FRONTEND_API` in `.github/workflows/build.yml`. Continuous Hello/Bye discovery-listener + heartbeat loop (M2→M3 bridge) also remains open.
+
 ### 6.1 Source mapping — `obs/obs_mapping.{h,cpp}`
 
 Enumerate Media Sources, detect RTSP inputs, auto-suggest camera↔source↔profile (high-profile default):
@@ -577,6 +589,8 @@ static bool IsMediaSource(obs_source_t *s)
 
 static bool IsRtspInput(obs_source_t *s)
 {
+    // OBS 32.2.1: no OBS*AutoRelease wrapper — use obs_source_get_settings +
+    // explicit obs_data_release (see obs_apply::SourceInputUrl).
     OBSDataAutoRelease d = obs_source_get_settings(s);
     const char *input = obs_data_get_string(d, "input");
     return input && strncmp(input, "rtsp://", 7) == 0;
@@ -677,7 +691,7 @@ The scene→preset dialog binds either an existing preset or calls `SetPreset(na
 
 ### 6.5 Hotkeys — `obs/hotkeys.{h,cpp}`
 
-Pre-bind Ctrl+Alt+1..9 using the OBS internal hotkey API (as obs-ptz does):
+Implemented with the public `obs_hotkey_register_frontend` API (no prebinding, user assigns keys in OBS Settings → Hotkeys). PTZ blocking calls run on a detached worker via a templated `FireAsync` (bare function pointers could not capture). Pre-bind Ctrl+Alt+1..9 via `obs-internal.h` as obs-ptz does:
 
 ```cpp
 #include <obs-internal.h>   // obs_hotkey_binding_t / set_combos
