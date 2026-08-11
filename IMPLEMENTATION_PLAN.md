@@ -157,6 +157,17 @@ jobs:
 
 All files under `onvif/` are **OBS-free** (link against nothing but the Windows API + vendored headers) so `ctest` runs them headless.
 
+> **Status (2026-08):** implemented and CI-green (Windows x64). `onvif/base64`, `sha1`, `xml`
+> (TinyXML2 wrapper), `ws_security` (UsernameToken digest, BCrypt nonce),
+> `soap_client` (WinHTTP POST, SOAP fault parse, cert toggle, digest→basic auth
+> fallback), `ws_discovery` (probe build + ProbeMatches/Hello/Bye parse + UDP
+> surface), `identity` (scope-MAC + fingerprint), and `onvif_client` (typed
+> GetCapabilities/GetDeviceInformation/GetProfiles/GetStreamUri/GotoPreset).
+> Tests run headless: unit suites plus live round-trips against
+> `tests/mock_onvif_server.py` (SOAP + UDP over 127.0.0.1) including HTTPS with
+> the committed self-signed fixture. Open follow-ups (Midea-accurate, not
+> required for M1): Media2 path and the §8 schema-conformance lane.
+
 ### 4.1 Plumbing primitives (P1a, parallelizable)
 
 `onvif/base64.{h,cpp}`, `onvif/sha1.{h,cpp}`, `onvif/xml.{h,cpp}` (TinyXML2, vendored, zlib-licensed), `onvif/json.{h,cpp}` (thin wrapper over the vendored nlohmann single-header, so the core stays testable without OBS).
