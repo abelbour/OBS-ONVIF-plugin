@@ -55,6 +55,7 @@ bool Worker::FirstProfileToken(obs_onvif::OnvifClient &client,
 			       std::string &token, std::string &err)
 {
 	try {
+		client.GetCapabilities();
 		const auto profiles = client.GetProfiles();
 		if (profiles.empty()) {
 			err = "camera exposes no media profiles";
