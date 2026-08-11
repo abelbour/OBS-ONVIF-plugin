@@ -78,12 +78,12 @@ PROFILES_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
   </env:Body>
 </env:Envelope>"""
 
-STREAM_URI_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
+STREAM_URI_RESPONSE = """<?xml version="1.0" encoding="UTF-8"?>
 <env:Envelope xmlns:env="{ENV}" xmlns:trt="{TRT}" xmlns:tt="{TT}">
   <env:Body>
     <trt:GetStreamUriResponse>
       <trt:MediaUri>
-        <tt:Uri>rtsp://127.0.0.1:554/Streaming/Channels/101</tt:Uri>
+        <tt:Uri>rtsp://{rtsp_host}:554/Streaming/Channels/101</tt:Uri>
         <tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>
         <tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>
         <tt:Timeout>PT30S</tt:Timeout>
@@ -119,13 +119,14 @@ UNAUTHORIZED_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
   </env:Body>
 </env:Envelope>"""
 
-ROUTES = {
-    "GetDeviceInformation": DEVICE_INFO_RESPONSE,
-    "GetCapabilities": CAPABILITIES_RESPONSE,
-    "GetProfiles": PROFILES_RESPONSE,
-    "GetStreamUri": STREAM_URI_RESPONSE,
-    "GotoPreset": GOTO_PRESET_RESPONSE,
-}
+def _routes(rtsp_host):
+    return {
+        "GetDeviceInformation": DEVICE_INFO_RESPONSE,
+        "GetCapabilities": CAPABILITIES_RESPONSE,
+        "GetProfiles": PROFILES_RESPONSE,
+        "GetStreamUri": STREAM_URI_RESPONSE.format(rtsp_host=rtsp_host),
+        "GotoPreset": GOTO_PRESET_RESPONSE,
+    }
 
 
 def _grab_tag(body, tag):
@@ -158,11 +159,12 @@ class OnvifMock:
     """Stateless request router; shared by the handler and the ctest launcher."""
 
     def __init__(self, auth="digest", username="admin", password="pass",
-                 basic_required=False):
+                 basic_required=False, rtsp_host="127.0.0.1"):
         self.auth = auth            # "digest" | "basic" | "open"
         self.username = username
         self.password = password
         self.basic_required = basic_required  # digest-off when True
+        self.rtsp_host = rtsp_host  # host in GetStreamUri replied URIs
 
     def handle(self, body, headers):
         # 1. Authentication gate -------------------------------------------------
@@ -179,7 +181,7 @@ class OnvifMock:
                 return (401, UNAUTHORIZED_RESPONSE)
 
         # 2. Route by operation marker -------------------------------------------
-        for marker, response in ROUTES.items():
+        for marker, response in _routes(self.rtsp_host).items():
             if marker in body:
                 return (200, response)
         return (500, FAULT_RESPONSE)

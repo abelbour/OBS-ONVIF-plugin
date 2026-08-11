@@ -15,6 +15,20 @@ if(BUILD_TESTING)
 		add_test(NAME ${_name} COMMAND ${_name})
 	endforeach()
 
+	# Registry unit tests (persistence + wincred + apply policy + detection).
+	set(REGISTRY_TESTS
+		unit/store_test.cpp
+		unit/apply_test.cpp
+		unit/registry_test.cpp
+	)
+
+	foreach(_test IN LISTS REGISTRY_TESTS)
+		get_filename_component(_name ${_test} NAME_WE)
+		add_executable(${_name} ${_test})
+		target_link_libraries(${_name} PRIVATE onvif_core registry_lib)
+		add_test(NAME ${_name} COMMAND ${_name})
+	endforeach()
+
 	# Live SOAP round-trips against tests/mock_onvif_server.py. Needs a
 	# Python3 interpreter; skipped (with a warning) when absent.
 	find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -53,6 +67,20 @@ if(BUILD_TESTING)
 			COMMAND ${Python3_EXECUTABLE}
 				${CMAKE_CURRENT_SOURCE_DIR}/run_client_test.py
 				$<TARGET_FILE:onvif_client_test>
+		)
+	endif()
+
+	# Live registry flow against the mock: discovery round-trip seeds a
+	# camera, a re-bound mock host is detected as an IP move, and the mapped
+	# source URL rewrite is observed.
+	if(Python3_FOUND)
+		add_executable(registry_live_test unit/registry_test.cpp)
+		target_link_libraries(registry_live_test PRIVATE onvif_core registry_lib)
+		add_test(
+			NAME registry_live
+			COMMAND ${Python3_EXECUTABLE}
+				${CMAKE_CURRENT_SOURCE_DIR}/run_registry_test.py
+				$<TARGET_FILE:registry_live_test>
 		)
 	endif()
 endif()
