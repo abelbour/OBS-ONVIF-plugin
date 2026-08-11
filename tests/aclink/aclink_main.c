@@ -112,6 +112,8 @@ int main(int argc, char **argv)
 		char cur[128] = {0};
 		rc = abi->get_current_preset(cam, cur, sizeof(cur));
 		PHASE(rc == 0 && cur[0] != '\0', "get_current_preset tracks last recall");
+		printf("note: get_current rc=%d cur='%s' saved='%s'\n", rc, cur,
+		       saved_token ? saved_token : "(null)");
 		if (rc == 0 && saved_token)
 			PHASE(strcmp(cur, saved_token) == 0,
 			      "current preset == recalled token");
