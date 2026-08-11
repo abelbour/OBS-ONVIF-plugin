@@ -51,6 +51,7 @@
 #include "obs-onvif.h"
 #include "obs_apply.h"
 #include "obs_mapping.h"
+#include "settings_dialog.h"
 #include "store.h"
 
 namespace obs_onvif::glue {
@@ -660,6 +661,11 @@ public:
 		auto *hint = new QLabel(String("Dock.Policy.Hint"), this);
 		hint->setWordWrap(true);
 		layout->addWidget(hint);
+
+		auto *settings = new QPushButton(String("Dock.Settings"), this);
+		connect(settings, &QPushButton::clicked, this,
+			[]() { ShowSettingsDialog(); });
+		layout->addWidget(settings, 0, Qt::AlignLeft);
 		layout->addStretch();
 
 		LoadState();

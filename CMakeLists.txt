@@ -39,6 +39,7 @@ if(ENABLE_QT)
     PRIVATE
       obs/apply_prompt.cpp
       obs/dock.cpp
+      obs/settings_dialog.cpp
   )
   target_compile_options(
     ${CMAKE_PROJECT_NAME}
