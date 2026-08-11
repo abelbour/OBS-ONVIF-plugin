@@ -31,7 +31,7 @@ struct Backend {
 	std::string collection;
 };
 
-Backend &Backend()
+Backend &GetBackend()
 {
 	static Backend b;
 	return b;
@@ -47,7 +47,7 @@ std::mutex &Guard()
 // Guard() while `fn` runs (the snapshot live in this scope).
 template <typename Fn> int RunCamera(const char *cam, Fn &&fn)
 {
-	Backend &b = Backend();
+	Backend &b = GetBackend();
 	if (!cam || !*cam || !b.cams)
 		return -1;
 	const std::vector<Camera> table = b.cams();
@@ -85,7 +85,7 @@ void Initialize(const std::string &configDir, CameraProvider cams,
 		CredsProvider creds)
 {
 	std::lock_guard<std::mutex> lock(Guard());
-	Backend &b = Backend();
+	Backend &b = GetBackend();
 	b.store = Store(configDir);
 	b.cams = std::move(cams);
 	b.creds = std::move(creds);
@@ -94,7 +94,7 @@ void Initialize(const std::string &configDir, CameraProvider cams,
 void Shutdown()
 {
 	std::lock_guard<std::mutex> lock(Guard());
-	Backend &b = Backend();
+	Backend &b = GetBackend();
 	b.cams = CameraProvider();
 	b.creds = CredsProvider();
 	b.collection.clear();
@@ -103,7 +103,7 @@ void Shutdown()
 void SetCollection(const std::string &collectionUuid)
 {
 	std::lock_guard<std::mutex> lock(Guard());
-	Backend().collection = collectionUuid;
+	GetBackend().collection = collectionUuid;
 }
 
 } // namespace obs_onvif::abi
@@ -122,7 +122,7 @@ int AGetCameraList(obs_cast_camera_info_t **out, int *count)
 	*out = nullptr;
 	*count = 0;
 	std::lock_guard<std::mutex> lock(Guard());
-	Backend &b = Backend();
+	Backend &b = GetBackend();
 	if (!b.cams)
 		return 0;
 	const std::vector<Camera> table = b.cams();
@@ -164,7 +164,7 @@ void AReleaseCameraList(obs_cast_camera_info_t *out)
 int AMove(const char *cam, double pan, double tilt, double zoom)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(Backend());
+		registry::Worker w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.Move(c, pan, tilt, zoom, err))
 			return -3;
@@ -175,7 +175,7 @@ int AMove(const char *cam, double pan, double tilt, double zoom)
 int AStop(const char *cam)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(Backend());
+		registry::Worker w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.Stop(c, err))
 			return -3;
@@ -187,7 +187,7 @@ int AStop(const char *cam)
 int AGotoPreset(const char *cam, const char *preset_token)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(Backend());
+		registry::Worker w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.GotoPreset(c, preset_token ? preset_token : "", err))
 			return -3;
@@ -199,7 +199,7 @@ int ASavePreset(const char *cam, const char *name, char *token_out,
 		size_t token_cap)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(Backend());
+		registry::Worker w = MakeWorker(GetBackend());
 		std::string token, err;
 		if (!w.SavePreset(c, name ? name : "", token, err))
 			return -3;
@@ -215,7 +215,7 @@ int AListPresets(const char *cam, const char **names[], const char **tokens[],
 	*tokens = nullptr;
 	*count = 0;
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(Backend());
+		registry::Worker w = MakeWorker(GetBackend());
 		std::vector<registry::PresetInfo> presets;
 		std::string err;
 		if (!w.ListPresets(c, presets, err))
@@ -254,7 +254,7 @@ int ARenamePreset(const char *cam, const char *preset_token,
 		  const char *new_name)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(Backend());
+		registry::Worker w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.RenamePreset(c, preset_token ? preset_token : "",
 				    new_name ? new_name : "", err))
@@ -266,7 +266,7 @@ int ARenamePreset(const char *cam, const char *preset_token,
 int ADeletePreset(const char *cam, const char *preset_token)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(Backend());
+		registry::Worker w = MakeWorker(GetBackend());
 		std::string err;
 		if (!w.DeletePreset(c, preset_token ? preset_token : "", err))
 			return -3;
@@ -277,7 +277,7 @@ int ADeletePreset(const char *cam, const char *preset_token)
 int AGetCurrentPreset(const char *cam, char *token_out, size_t cap)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker w = MakeWorker(Backend());
+		registry::Worker w = MakeWorker(GetBackend());
 		std::string token;
 		w.CurrentPresetToken(c.id, token);
 		CopyToken(token_out, cap, token);
@@ -294,7 +294,7 @@ int AGetBindings(const char **scenes[], const char **cameras[],
 	*tokens = nullptr;
 	*count = 0;
 	std::lock_guard<std::mutex> lock(Guard());
-	Backend &b = Backend();
+	Backend &b = GetBackend();
 	if (b.collection.empty())
 		return 0;
 	Store s(b.store.ConfigDir());
@@ -342,7 +342,7 @@ int ASetBinding(const char *scene_name, const char *cam,
 	if (!scene_name || !*scene_name || !cam || !*cam || !preset_token)
 		return -1;
 	std::lock_guard<std::mutex> lock(Guard());
-	Backend &b = Backend();
+	Backend &b = GetBackend();
 	if (b.collection.empty())
 		return -1;
 	Store s(b.store.ConfigDir());
@@ -372,7 +372,7 @@ int AClearBinding(const char *scene_name)
 	if (!scene_name || !*scene_name)
 		return -1;
 	std::lock_guard<std::mutex> lock(Guard());
-	Backend &b = Backend();
+	Backend &b = GetBackend();
 	if (b.collection.empty())
 		return -1;
 	Store s(b.store.ConfigDir());
