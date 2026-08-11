@@ -159,8 +159,11 @@ def _routes(rtsp_host):
 
 def _grab_tag(body, tag):
     # Require a boundary after the tag name so `wsse:Username` does not match
-    # inside `<wsse:UsernameToken>`.
-    m = re.search(r"<%s(?:\s[^>]*)?>(.*?)</%s>" % (tag, tag), body, re.S)
+    # inside `<wsse:UsernameToken>`. The optional `(?:[^:>]*:)?` prefix lets a
+    # bare local name match its namespace-qualified form in the SOAP body
+    # (`<trt:PresetName>` matches a lookup for "PresetName").
+    m = re.search(r"<(?:[^:>]*:)?%s(?:\s[^>]*)?>(.*?)</(?:[^:>]*:)?%s>"
+                  % (tag, tag), body, re.S)
     return m.group(1) if m else ""
 
 
