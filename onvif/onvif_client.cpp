@@ -359,7 +359,7 @@ std::vector<Preset> OnvifClient::GetPresets(const std::string &profileToken)
 		throw std::runtime_error("GetPresets: missing response element");
 
 	std::vector<Preset> presets;
-	for (const tinyxml2::XMLElement *p : xml::Children(resp, "Preset")) {
+	for (const tinyxml2::XMLElement *p : xml::Children(resp, "PTZPreset")) {
 		Preset pr;
 		pr.token = Attr(p, "token");
 		pr.name = xml::ChildText(p, "Name");
