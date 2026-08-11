@@ -1,6 +1,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -177,6 +178,25 @@ static void TestPersistRestore()
 
 // -- live (mock-driven) ---------------------------------------------
 
+// Turns an uncaught exception in a live phase (which would otherwise abort
+// with the opaque 0xc0000409) into a visible FAIL with the message.
+#define LIVE_BODY(phase, body)                                                 \
+	do {                                                                 \
+		try {                                                         \
+			body                                                    \
+		} catch (const std::exception &e) {                            \
+			std::cerr << phase << ": uncaught exception: "         \
+				  << e.what() << std::endl;                    \
+			CHECK(false);                                          \
+		} catch (...) {                                                \
+			std::cerr << phase << ": uncaught unknown exception"   \
+				  << std::endl;                                \
+			CHECK(false);                                          \
+		}                                                            \
+	} while (0)
+
+#define STAGE(name) std::cerr << "registry_live: " << name << std::endl
+
 // argv: bin seed <httpHost> <httpPort> <udpPort> <configDir>
 static void LiveSeed(int argc, char **argv)
 {
@@ -189,50 +209,56 @@ static void LiveSeed(int argc, char **argv)
 	const int udpPort = std::atoi(argv[4]);
 	const std::string configDir = argv[5];
 
-	// 1. Discovery round-trip against the mock UDP responder.
-	intptr_t sock = OpenUdpSocket(0, false, false);
-	CHECK(sock != -1);
-	CHECK(SendUdp(sock, BuildProbe("urn:uuid:seed"), "127.0.0.1",
-		      (uint16_t)udpPort) > 0);
-	std::string reply;
-	CHECK(RecvUdp(sock, reply, 5000) > 0);
-	std::vector<DiscoveredDevice> devs;
-	CHECK(ParseDiscoveryResponse(reply, devs));
-	CHECK_EQ(devs.size(), size_t(1));
-	CHECK(!devs[0].xaddrs.empty());
-	const std::string base = devs[0].xaddrs[0];
+	LIVE_BODY("seed", {
+		// 1. Discovery round-trip against the mock UDP responder.
+		STAGE("udp probe");
+		intptr_t sock = OpenUdpSocket(0, false, false);
+		CHECK(sock != -1);
+		CHECK(SendUdp(sock, BuildProbe("urn:uuid:seed"), "127.0.0.1",
+			      (uint16_t)udpPort) > 0);
+		std::string reply;
+		CHECK(RecvUdp(sock, reply, 5000) > 0);
+		std::vector<DiscoveredDevice> devs;
+		CHECK(ParseDiscoveryResponse(reply, devs));
+		CHECK_EQ(devs.size(), size_t(1));
+		CHECK(!devs[0].xaddrs.empty());
+		const std::string base = devs[0].xaddrs[0];
 
-	// 2. Resolve the camera and fingerprint it.
-	OnvifClient cl(base, "admin", "pass");
-	const DeviceInfo info = cl.GetDeviceInformation();
-	DeviceIdentity id;
-	id.serialNumber = info.serialNumber;
-	id.hardwareId = info.hardwareId;
-	id.scopes = devs[0].scopes;
-	id.uuid = devs[0].uuid;
+		// 2. Resolve the camera and fingerprint it.
+		STAGE("device info");
+		OnvifClient cl(base, "admin", "pass");
+		const DeviceInfo info = cl.GetDeviceInformation();
+		DeviceIdentity id;
+		id.serialNumber = info.serialNumber;
+		id.hardwareId = info.hardwareId;
+		id.scopes = devs[0].scopes;
+		id.uuid = devs[0].uuid;
 
-	// 3. Seed the registry (first contact) and persist.
-	Store store(configDir);
-	Registry reg;
-	reg.Restore(store);
-	const StreamUriResult stream = cl.GetStreamUri("profile1");
-	std::vector<SourceRewrite> rw;
-	auto up = reg.SeenDevice(id, info.model, base, "profile1", stream.uri,
-				  1, false, "", rw);
-	CHECK(up.first_seen);
-	const Camera *cam = reg.FindCamera(BuildFingerprint(id));
-	CHECK(cam != nullptr);
-	CHECK_EQ(cam->xaddr, base);
-	CHECK(cam->online);
-	CHECK_EQ(cam->lastKnownRTSP.at("profile1"), stream.uri);
+		// 3. Seed the registry (first contact) and persist.
+		STAGE("stream uri");
+		Store store(configDir);
+		Registry reg;
+		reg.Restore(store);
+		const StreamUriResult stream = cl.GetStreamUri("profile1");
+		std::vector<SourceRewrite> rw;
+		auto up = reg.SeenDevice(id, info.model, base, "profile1",
+					  stream.uri, 1, false, "", rw);
+		CHECK(up.first_seen);
+		const Camera *cam = reg.FindCamera(BuildFingerprint(id));
+		CHECK(cam != nullptr);
+		CHECK_EQ(cam->xaddr, base);
+		CHECK(cam->online);
+		CHECK_EQ(cam->lastKnownRTSP.at("profile1"), stream.uri);
 
-	// 4. Re-contact on the same address: no move.
-	up = reg.SeenDevice(id, info.model, base, "profile1", stream.uri, 2,
-			    false, "", rw);
-	CHECK(!up.address_changed);
+		// 4. Re-contact on the same address: no move.
+		up = reg.SeenDevice(id, info.model, base, "profile1",
+				    stream.uri, 2, false, "", rw);
+		CHECK(!up.address_changed);
 
-	CHECK(reg.Persist(store));
-	CloseUdpSocket(sock);
+		STAGE("persist");
+		CHECK(reg.Persist(store));
+		CloseUdpSocket(sock);
+	});
 }
 
 // argv: bin rehome <httpHost> <httpPort> <udpPort> <configDir>
@@ -247,68 +273,78 @@ static void LiveRehome(int argc, char **argv)
 	const int udpPort = std::atoi(argv[4]);
 	const std::string configDir = argv[5];
 
-	// 1. Restore the camera seeded by the previous phase.
-	Store store(configDir);
-	Registry reg;
-	CHECK(reg.Restore(store));
-	CHECK(reg.CameraCount() == 1);
-	const Camera *seeded = reg.FindCamera("sn:DS2CD2032I20170801AACH12345678");
-	CHECK(seeded != nullptr);
-	CHECK(seeded->xaddr.find("127.0.0.1") != std::string::npos);
+	LIVE_BODY("rehome", {
+		// 1. Restore the camera seeded by the previous phase.
+		STAGE("restore");
+		Store store(configDir);
+		Registry reg;
+		CHECK(reg.Restore(store));
+		CHECK(reg.CameraCount() == 1);
+		const Camera *seeded =
+			reg.FindCamera("sn:DS2CD2032I20170801AACH12345678");
+		CHECK(seeded != nullptr);
+		CHECK(seeded->xaddr.find("127.0.0.1") != std::string::npos);
 
-	// 2. Re-discover: the mock now answers from a new loopback host.
-	intptr_t sock = OpenUdpSocket(0, false, false);
-	CHECK(sock != -1);
-	CHECK(SendUdp(sock, BuildProbe("urn:uuid:rehome"), "127.0.0.1",
-		      (uint16_t)udpPort) > 0);
-	std::string reply;
-	CHECK(RecvUdp(sock, reply, 5000) > 0);
-	std::vector<DiscoveredDevice> devs;
-	CHECK(ParseDiscoveryResponse(reply, devs));
-	CHECK_EQ(devs.size(), size_t(1));
-	CHECK(!devs[0].xaddrs.empty());
-	const std::string base = devs[0].xaddrs[0];
-	CHECK(base.find(httpHost) != std::string::npos);
+		// 2. Re-discover: the mock now answers from a new loopback host.
+		STAGE("udp probe");
+		intptr_t sock = OpenUdpSocket(0, false, false);
+		CHECK(sock != -1);
+		CHECK(SendUdp(sock, BuildProbe("urn:uuid:rehome"), "127.0.0.1",
+			      (uint16_t)udpPort) > 0);
+		std::string reply;
+		CHECK(RecvUdp(sock, reply, 5000) > 0);
+		std::vector<DiscoveredDevice> devs;
+		CHECK(ParseDiscoveryResponse(reply, devs));
+		CHECK_EQ(devs.size(), size_t(1));
+		CHECK(!devs[0].xaddrs.empty());
+		const std::string base = devs[0].xaddrs[0];
+		CHECK(base.find(httpHost) != std::string::npos);
 
-	// 3. Resolve identity + fresh stream URI on the new host.
-	OnvifClient cl(base, "admin", "pass");
-	const DeviceInfo info = cl.GetDeviceInformation();
-	DeviceIdentity id;
-	id.serialNumber = info.serialNumber;
-	id.hardwareId = info.hardwareId;
-	id.scopes = devs[0].scopes;
-	id.uuid = devs[0].uuid;
-	const StreamUriResult stream = cl.GetStreamUri("profile1");
-	CHECK(stream.uri.find(httpHost) != std::string::npos);
+		// 3. Resolve identity + fresh stream URI on the new host.
+		STAGE("device info + stream uri");
+		OnvifClient cl(base, "admin", "pass");
+		const DeviceInfo info = cl.GetDeviceInformation();
+		DeviceIdentity id;
+		id.serialNumber = info.serialNumber;
+		id.hardwareId = info.hardwareId;
+		id.scopes = devs[0].scopes;
+		id.uuid = devs[0].uuid;
+		const StreamUriResult stream = cl.GetStreamUri("profile1");
+		CHECK(stream.uri.find(httpHost) != std::string::npos);
 
-	// 4. Map CAM-101 to this camera (as M3 would) and observe the rewrite.
-	const std::string fp = BuildFingerprint(id);
-	SourceMapping m;
-	m.source_name = "CAM-101";
-	m.camera_id = fp;
-	m.profileToken = "profile1";
-	reg.SetMappings({m});
-	reg.Apply().TrackSourceUrl("CAM-101",
-				   "rtsp://127.0.0.1:554/Streaming/Channels/101");
+		// 4. Map CAM-101 to this camera (as M3 would) and observe the
+		//    rewrite.
+		const std::string fp = BuildFingerprint(id);
+		SourceMapping m;
+		m.source_name = "CAM-101";
+		m.camera_id = fp;
+		m.profileToken = "profile1";
+		reg.SetMappings({m});
+		reg.Apply().TrackSourceUrl("CAM-101",
+					   "rtsp://127.0.0.1:554/Streaming/Channels/101");
 
-	std::vector<SourceRewrite> rw;
-	const auto up = reg.SeenDevice(id, info.model, base, "profile1",
-				       stream.uri, 3, /*output_active=*/false,
-				       "admin:pass", rw);
-	CHECK(up.address_changed);
-	CHECK(up.action == ApplyDecision::AppliedNow);
-	CHECK_EQ(rw.size(), size_t(1));
-	CHECK_EQ(rw[0].new_url,
-		 std::string("rtsp://admin:pass@") + httpHost +
-			 ":554/Streaming/Channels/101");
+		STAGE("move + rewrite");
+		std::vector<SourceRewrite> rw;
+		const auto up = reg.SeenDevice(id, info.model, base, "profile1",
+					       stream.uri, 3,
+					       /*output_active=*/false,
+					       "admin:pass", rw);
+		CHECK(up.address_changed);
+		CHECK(up.action == ApplyDecision::AppliedNow);
+		CHECK_EQ(rw.size(), size_t(1));
+		CHECK_EQ(rw[0].new_url,
+			 std::string("rtsp://admin:pass@") + httpHost +
+				 ":554/Streaming/Channels/101");
 
-	// 5. Registry state reflects the move; persists for the next run.
-	const Camera *moved = reg.FindCamera(fp);
-	CHECK(moved != nullptr);
-	CHECK_EQ(moved->xaddr, base);
-	CHECK_EQ(moved->lastKnownRTSP.at("profile1"), stream.uri);
-	CHECK(reg.Persist(store));
-	CloseUdpSocket(sock);
+		// 5. Registry state reflects the move; persists for the next run.
+		const Camera *moved = reg.FindCamera(fp);
+		CHECK(moved != nullptr);
+		CHECK_EQ(moved->xaddr, base);
+		CHECK_EQ(moved->lastKnownRTSP.at("profile1"), stream.uri);
+		STAGE("persist");
+		CHECK(reg.Persist(store));
+		CloseUdpSocket(sock);
+	});
 }
 
 int main(int argc, char **argv)
