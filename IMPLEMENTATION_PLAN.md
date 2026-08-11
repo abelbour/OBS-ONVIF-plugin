@@ -399,6 +399,25 @@ std::string BuildFingerprint(const DeviceInformation &info,
 
 ## 5. Milestone 2 — Registry + persistence
 
+> **Status (2026-08):** implemented in `registry/` and CI-green (Windows x64).
+> `camera.h` carries the data model; `store.{h,cpp}` persists cameras /
+> collections / config / policies as JSON under
+> `%APPDATA%\obs-studio\plugin_config\obs-onvif\` (dir injectable for tests)
+> and stores secrets in the Windows Credential Vault via `CredWrite`/`CredRead`
+> (never in JSON); `apply.{h,cpp}` is the deterministic live-output policy
+> state machine (ask/always/ignore, 30 s auto-defer → re-offer on idle) plus
+> `RewriteSourceUrl` (credential splicing); `registry.{h,cpp}` is the in-memory
+> camera table with fingerprint matching and IP-change detection producing
+> `SourceRewrite` records. Tests: `store_test` (round-trips + wincred on the CI
+> runner), `apply_test` (all state transitions + URL helpers), `registry_test`
+> (unit: first-seen / no-change / move / live-prompt / persist-restore), and a
+> live `registry_live` ctest that drives the mock end-to-end — a discovery
+> round-trip registers a camera, the mock re-binds to a new loopback host
+> (127.0.0.2), and the registry detects the move and rewrites the mapped source
+> URL with credentials spliced. Open follow-ups (M3): continuous
+> Hello/Bye listener + heartbeat loop threading, per-camera capabilities cache,
+> and the OBS-side dispatch.
+
 ### 5.1 Data model (mirrors PLAN.md §Data model)
 
 `registry/camera.h`:
