@@ -26,7 +26,7 @@ struct Dispatch {
 };
 
 struct Recorder {
-	std::mutex mu;
+	mutable std::mutex mu;
 	std::vector<Dispatch> dispatches;
 	unsigned inFlight = 0;
 	unsigned maxInFlight = 0;
