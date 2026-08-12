@@ -64,14 +64,15 @@ int main(int argc, char **argv)
 			}
 		}
 		CHECK(found);
-		CHECK_EQ(enc.encoding, std::string("H264"));
+		CHECK_EQ(enc.encoding, std::string("video/H264"));
 		CHECK_EQ(enc.resolution.width, 1920);
 		CHECK_EQ(enc.resolution.height, 1080);
 
 		const auto opts = client.GetVideoEncoderConfigurationOptions2(
 			profiles[0].videoEncoderToken);
-		CHECK(opts.max_frame_rate > 0.0);
+		// Media2 options carry bitrate + resolutions but no frame-rate range.
 		CHECK(opts.max_bitrate > 0);
+		CHECK_EQ(opts.max_frame_rate, 0.0);
 		CHECK(opts.resolutions.size() >= 3);
 
 		enc.resolution.width = 1280;

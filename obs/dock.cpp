@@ -15,7 +15,10 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QFormLayout>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -49,6 +52,7 @@
 #include <map>
 
 #include "obs-onvif.h"
+#include "discovery.h"
 #include "obs_apply.h"
 #include "obs_mapping.h"
 #include "settings_dialog.h"
@@ -133,12 +137,24 @@ public:
 		table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
 		auto *refresh = new QPushButton(String("Dock.Refresh"), this);
+		auto *add = new QPushButton(String("Dock.Camera.Add"), this);
+		auto *remove = new QPushButton(String("Dock.Camera.Remove"), this);
 		connect(refresh, &QPushButton::clicked, this,
 			&CamerasWidget::Refresh);
+		connect(add, &QPushButton::clicked, this,
+			&CamerasWidget::AddByIp);
+		connect(remove, &QPushButton::clicked, this,
+			&CamerasWidget::RemoveSelected);
+
+		auto *buttons = new QHBoxLayout();
+		buttons->addWidget(refresh);
+		buttons->addWidget(add);
+		buttons->addWidget(remove);
+		buttons->addStretch();
 
 		auto *layout = new QVBoxLayout(this);
 		layout->addWidget(table_);
-		layout->addWidget(refresh, 0, Qt::AlignLeft);
+		layout->addLayout(buttons);
 
 		Refresh();
 	}
@@ -157,6 +173,7 @@ private:
 		table_->setRowCount(n);
 		for (int i = 0; i < n; ++i) {
 			auto *name = new QTableWidgetItem(FromUtf8(cams[i].name));
+			name->setData(Qt::UserRole, FromUtf8(cams[i].camera_id));
 			auto *online = new QTableWidgetItem(
 				cams[i].online ? String("Dock.Yes")
 					       : String("Dock.No"));
@@ -168,6 +185,69 @@ private:
 		}
 		if (abi->release_camera_list)
 			abi->release_camera_list(cams);
+	}
+
+	// Manual add-by-IP fallback (M5d): prompts for host/port/credentials,
+	// resolves the camera through discovery::AddManual, then refreshes.
+	void AddByIp()
+	{
+		QDialog dlg(this);
+		dlg.setWindowTitle(String("Dock.Camera.Add"));
+		auto *form = new QFormLayout();
+		auto *host = new QLineEdit(QStringLiteral("192.168.1.64"), &dlg);
+		auto *port = new QSpinBox(&dlg);
+		port->setRange(1, 65535);
+		port->setValue(80);
+		auto *user = new QLineEdit(&dlg);
+		auto *pass = new QLineEdit(&dlg);
+		pass->setEchoMode(QLineEdit::Password);
+		form->addRow(String("Dock.Camera.Host"), host);
+		form->addRow(String("Dock.Camera.Port"), port);
+		form->addRow(String("Dock.Camera.User"), user);
+		form->addRow(String("Dock.Camera.Password"), pass);
+		auto *buttons = new QDialogButtonBox(
+			QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+		QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg,
+				 &QDialog::accept);
+		QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg,
+				 &QDialog::reject);
+		auto *layout = new QVBoxLayout(&dlg);
+		layout->addLayout(form);
+		layout->addWidget(buttons);
+		if (dlg.exec() != QDialog::Accepted)
+			return;
+
+		const std::string xaddr = "http://" +
+					  host->text().toStdString() + ":" +
+					  std::to_string(port->value()) +
+					  "/onvif/device_service";
+		const std::string u = user->text().toStdString();
+		const std::string p = pass->text().toStdString();
+		std::thread([xaddr, u, p, this]() {
+			std::string err;
+			obs_onvif::discovery::AddManual(xaddr, u, p, err);
+			QMetaObject::invokeMethod(this, [this]() { Refresh(); },
+						  Qt::QueuedConnection);
+		}).detach();
+	}
+
+	void RemoveSelected()
+	{
+		const int row = table_->currentRow();
+		if (row < 0)
+			return;
+		QTableWidgetItem *item = table_->item(row, 0);
+		if (!item)
+			return;
+		const QString id = item->data(Qt::UserRole).toString();
+		if (id.isEmpty())
+			return;
+		std::thread([id, this]() {
+			std::string err;
+			obs_onvif::discovery::RemoveManual(id.toStdString(), err);
+			QMetaObject::invokeMethod(this, [this]() { Refresh(); },
+						  Qt::QueuedConnection);
+		}).detach();
 	}
 
 	QTableWidget *table_;

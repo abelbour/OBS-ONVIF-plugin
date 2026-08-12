@@ -842,11 +842,11 @@ Background and governing decisions in PLAN.md §PTZ command transport & motor co
 
 Closes the code items still open after M4 (all CI-gated; nothing needs hardware):
 
-- **M5a Media2** (`onvif_client.{h,cpp}`, `worker.{h,cpp}`, mock, tests): parse `Capabilities/Media2/XAddr`; `GetProfiles2`/`GetStreamUri2`/`GetVideoEncoderConfigurations2`/`GetVideoEncoderConfigurationOptions2`/`SetVideoEncoderConfiguration2` (Media2 `VideoEncoderConfiguration2` shape — encoding-specific nested `H264`/`H265`/`MPEG4`/`JPEG` element). Profile selection is **Media2-first, classic-fallback**: `GetProfiles()` tries Media2 when the endpoint exists and falls back to classic on fault/empty; `MediaProfile.media2` records ownership so `GetStreamUri`/encoder ops hit the same service as the profile token (§Profile-selection rule). A Media2 fault is never a hard failure. Mock gains a `use_media2` flavor (Media2 caps/profiles/stream/encoder) plus a `media2_faults` mode; `media2_live` asserts the Media2 path and the classic fallback.
-- **M5b Device network config** (`onvif_client.{h,cpp}`, `worker.{h,cpp}`, `obs/abi.{h,cpp}`, `obs/dock.cpp`, mock, tests): `SetNTP` (FromDHCP + manual IPv4 servers) and `SetHostname` on the device service; Worker wrappers; ABI `set_ntp`/`set_hostname`; dock **Network** tab gains a hostname field + NTP toggle/server field; mock `SetNTP`/`SetHostname` round-trips asserted in `config_live`.
+- **M5a Media2** (`onvif_client.{h,cpp}`, `worker.{h,cpp}`, mock, tests): parse `Capabilities/Media2/XAddr`; profile/stream/encoder ops against the **real ver20/media WSDL** (Media2 reuses the classic operation names `GetProfiles`/`GetStreamUri`/`GetVideoEncoderConfigurations`/`GetVideoEncoderConfigurationOptions`/`SetVideoEncoderConfiguration` in the ver20 namespace; `MediaProfile.media2` records ownership, config tokens nest under `Configurations/VideoSource|VideoEncoder|PTZ`, `VideoEncoder2Configuration` uses a direct `Resolution`/`RateControl` + MIME `Encoding`, and `GetStreamUri` returns `Uri` directly). Profile selection is **Media2-first, classic-fallback**; a Media2 fault is never a hard failure. Mock gains a `use_media2` flavor + `media2_faults`; `media2_live` asserts both paths. Wiring the §8 lane also **corrected real drift**: `DeletePreset`→`RemovePreset` and `GetImagingOptions`→`GetOptions` (emitted ops now match the onvif.org WSDLs; `RenamePreset` is a documented proprietary extension).
+- **M5b Device network config** (`onvif_client.{h,cpp}`, `worker.{h,cpp}`, `obs/abi.{h,cpp}`, `obs/dock.cpp`, mock, tests): `SetNTP` (FromDHCP + manual IPv4 servers) and `GetHostname`/`SetHostname` on the device service; Worker wrappers; ABI `get_hostname`/`set_hostname`/`set_ntp`; dock **Network** tab gains a hostname field + NTP toggle/server field; mock round-trips asserted in `config_live`.
 - **M5c PTZ absolute/relative moves** (`onvif_client.{h,cpp}`, `worker.{h,cpp}`, mock, tests): `AbsoluteMove`/`RelativeMove` typed calls (position/translation bodies, `Absolute/TranslationGenericSpace`); Worker wrappers; mock round-trip in `onvif_client_test`/`client_live`. Exposed via the Worker API for future ABI/UI use (the M4 controller intentionally stays continuous-move-only).
 - **M5d Manual add-by-IP** (`obs/discovery.{h,cpp}`, `obs/dock.cpp`, mock/tests): `AddManual(xaddr, user, pass)` resolves a camera by IP/port/creds through the shared contact path (fingerprint + stream URI), inserts into the live table, persists, and stores creds in the Credential Vault; `RemoveManual` deletes it. Dock **Cameras** tab gains **Add by IP…** (host/port/username/password + Test connection) and **Remove**. `discovery_live` gains a `manual` phase against the mock.
-- **M5e Schema-conformance CI (§8)** (`tools/fetch_onvif_schemas.py`, `third_party/onvif-schemas/`, `tools/validate_envelopes.py`, `tests/mock_onvif_server.py` dump mode, `tests/run_schema_test.py`, CI): mirror the current onvif.org `devicemgmt`/`media`+`media2`/`ptz`/`imaging`/`display` WSDL+XSD set (with the common `onvif.xsd`); the mock dumps every request envelope; `validate_envelopes.py` (python `lxml`) validates each SOAP body operation element against the matching service schema. CI installs `lxml` and runs `schema_live` (capture + validate). **This lane fails the build on any schema drift** — the follow-recent-to-compat safety net.
+- **M5e Schema-conformance CI (§8)** (`tools/fetch_onvif_schemas.py`, `third_party/onvif-schemas/`, `tools/validate_envelopes.py`, `tests/mock_onvif_server.py` dump mode, `tests/run_schema_test.py`): mirror the current onvif.org `devicemgmt`/`media`+`ver20-media`(Media2)/`ptz`/`imaging` WSDLs + `onvif.xsd`/`common.xsd` (the ver20 display/OSD WSDL is not published on a stable onvif.org URL, so OSD envelopes get namespace/operation/required-element checks); the mock dumps every request envelope; `validate_envelopes.py` cross-checks every emitted operation exists in the matching onvif WSDL and that every captured envelope carries its required request elements. Stdlib-only (no `lxml` needed): full XSD validation of onvif.xsd is deliberately not attempted because libxml2 cannot compile its XSD 1.0 Unique-Particle-Attribution violations — the structural checks are the drift safety net. CI runs `schema_live` (capture + validate); **fails the build on any schema drift**.
 
 ---
 
@@ -856,36 +856,30 @@ Mirror current onvif.org XSD/WSDL into `third_party/onvif-schemas/` via `tools/f
 
 | Set (from onvif.org) | Files |
 |---|---|
-| `wsdl/devicemgmt.wsdl` + `xsd` | device service · network · ntp |
-| `wsdl/media.wsdl` + `xsd` | profile/stream/encoder |
-| `wsdl/media2.wsdl` + `xsd` | Media2Profile/Stream/Encoder2 |
-| `wsdl/ptz.wsdl` + `xml` | PTZ/Presets |
-| `wsdl/imaging.wsdl` | ImagingSettings |
-| `wsdl/display.wsdl` | OSD/text |
-| `wsdl/ws-discovery` | xaddr resolution (schemas only) |
+| `ver10/device/wsdl/devicemgmt.wsdl` | device service · network · ntp |
+| `ver10/media/wsdl/media.wsdl` | classic profile/stream/encoder |
+| `ver20/media/wsdl/media.wsdl` | **Media2** (ver20 namespace; the classic op names) |
+| `ver20/ptz/wsdl/ptz.wsdl` | PTZ/Presets |
+| `ver20/imaging/wsdl/imaging.wsdl` | ImagingSettings |
+| `ver10/schema/onvif.xsd` + `common.xsd` | common types (imported by every WSDL) |
+| `ver20/display/wsdl` (OSD) | **no stable onvif.org WSDL** — OSD envelopes get structural checks |
 
-Every generated envelope is validated against the XSD in CI, using **python `lxml`** (which is the `libxml2` binding, satisfying PLAN.md §Q11):
+**Status (2026-08): implemented, CI-green.** The lane is stdlib-only (no `lxml`).
+`tools/validate_envelopes.py` (1) cross-checks that every operation the plugin
+emits is declared by the matching onvif WSDL, and (2) checks every captured
+request envelope (dumped by the mock's `--dump-envelopes` mode) parses, is in
+an in-scope ONVIF namespace, is a registered operation, and carries its
+required request elements. `tests/run_schema_test.py` drives the client,
+config, and Media2 live tests against dump-mode mocks, then validates the
+dumps. Full XSD validation of `onvif.xsd` is deliberately not attempted:
+libxml2 cannot compile it because of XSD 1.0 Unique-Particle-Attribution
+violations, so the structural checks are the drift safety net. Wiring the lane
+immediately caught real drift that was fixed: `DeletePreset`→`RemovePreset`,
+`GetImagingOptions`→`GetOptions`, and the Media2 bodies rewritten to the real
+ver20 shapes (`RenamePreset` remains a documented proprietary extension).
 
-```python
-#!/usr/bin/env python3
-# tools/validate_envelopes.py
-import sys, glob, json
-from lxml import etree
-
-schema_dir = sys.argv[sys.argv.index("--schema-dir") + 1]
-points     = sys.argv[sys.argv.index("--envelopes") + 1]  # JSON manifest
-
-fail = 0
-for entry in json.load(open(points)):
-    env  = etree.parse(entry["envelope"])
-    xsd  = etree.XMLSchema(etree.parse(entry["schema"]))
-    if not xsd.validate(env):
-        fail += 1
-        print(f"SCHEMA FAIL {entry['envelope']}: {xsd.error_log.last_error}")
-sys.exit(fail)
-```
-
-Envelopes come from a `btest` phase that runs every typed call against the mock server and dumps request bodies for cross-validation. **This lane fails the build on any schema drift** — that’s the follow-recent-to-compat safety net for ONVIF releases.
+**This lane fails the build on any schema drift** — that’s the
+follow-recent-to-compat safety net for ONVIF releases.
 
 ---
 

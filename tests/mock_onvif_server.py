@@ -15,6 +15,7 @@ import argparse
 import base64
 import hashlib
 import http.server
+import os
 import re
 import socket
 import socketserver
@@ -214,14 +215,14 @@ def _imaging_options_response():
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<env:Envelope xmlns:env="{ENV}" xmlns:timg="{TIMG}" '
             f'xmlns:tt="{TT}"><env:Body>'
-            "<timg:GetImagingOptionsResponse><tt:ImagingOptions>"
+            "<timg:GetOptionsResponse><tt:ImagingOptions>"
             "<tt:Brightness><tt:Min>0</tt:Min><tt:Max>100</tt:Max>"
             "</tt:Brightness>"
             "<tt:ColorSaturation><tt:Min>0</tt:Min><tt:Max>100</tt:Max>"
             "</tt:ColorSaturation>"
             "<tt:Contrast><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:Contrast>"
             "<tt:Sharpness><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:Sharpness>"
-            "</tt:ImagingOptions></timg:GetImagingOptionsResponse>"
+            "</tt:ImagingOptions></timg:GetOptionsResponse>"
             "</env:Body></env:Envelope>")
 
 
@@ -350,52 +351,52 @@ def _profiles2_response():
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}" '
             f'xmlns:tt="{TT}">'
-            "<env:Body><trt2:GetProfiles2Response>"
-            '<trt2:Profiles token="mp1"><tt:Name>main2</tt:Name>'
-            '<tt:VideoSourceConfiguration token="vs0"/>'
-            '<tt:VideoEncoderConfiguration token="enc1"/>'
-            '<tt:PTZConfiguration token="ptz1"/></trt2:Profiles>'
+            "<env:Body><trt2:GetProfilesResponse>"
+            '<trt2:Profiles token="mp1" fixed="true"><tt:Name>main2</tt:Name>'
+            '<trt2:Configurations><trt2:VideoSource token="vs0"/>'
+            '<trt2:VideoEncoder token="enc1"/><trt2:PTZ token="ptz1"/>'
+            "</trt2:Configurations></trt2:Profiles>"
             '<trt2:Profiles token="mp2"><tt:Name>sub2</tt:Name>'
-            '<tt:VideoSourceConfiguration token="vs0"/>'
-            '<tt:VideoEncoderConfiguration token="enc2"/>'
-            '<tt:PTZConfiguration token="ptz1"/></trt2:Profiles>'
-            "</trt2:GetProfiles2Response></env:Body></env:Envelope>")
+            '<trt2:Configurations><trt2:VideoSource token="vs0"/>'
+            '<trt2:VideoEncoder token="enc2"/><trt2:PTZ token="ptz1"/>'
+            "</trt2:Configurations></trt2:Profiles>"
+            "</trt2:GetProfilesResponse></env:Body></env:Envelope>")
 
 
 def _stream_uri2_response(rtsp_host):
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}" '
-            f'xmlns:tt="{TT}"><env:Body><trt2:GetStreamUri2Response>'
-            "<trt2:MediaUri>"
-            f"<tt:Uri>rtsp://{rtsp_host}:554/Streaming/Channels/101</tt:Uri>"
-            "<tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>"
-            "<tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>"
-            "<tt:Timeout>PT30S</tt:Timeout>"
-            "</trt2:MediaUri></trt2:GetStreamUri2Response>"
+            f'xmlns:tt="{TT}"><env:Body><trt2:GetStreamUriResponse>'
+            f"<trt2:Uri>rtsp://{rtsp_host}:554/Streaming/Channels/101</trt2:Uri>"
+            "<trt2:SessionTimeout>PT30S</trt2:SessionTimeout>"
+            "</trt2:GetStreamUriResponse>"
             "</env:Body></env:Envelope>")
 
 
 def _encoder2_configs_response(configs):
     rows = []
     for token, cfg in configs.items():
+        enc = cfg["encoding"]
+        if not enc.startswith("video/"):
+            enc = "video/" + enc
         rows.append(
             f'<trt2:Configurations token="{token}">'
             f'<tt:Name>{cfg["name"]}</tt:Name>'
-            f'<tt:Encoding>{cfg["encoding"]}</tt:Encoding>'
-            f'<tt:{cfg["encoding"]}><tt:Resolution><tt:Width>'
-            f'{_num(cfg["width"])}</tt:Width><tt:Height>'
-            f'{_num(cfg["height"])}</tt:Height></tt:Resolution>'
+            f'<tt:Encoding>{enc}</tt:Encoding>'
+            f'<tt:Resolution><tt:Width>{_num(cfg["width"])}</tt:Width>'
+            f'<tt:Height>{_num(cfg["height"])}</tt:Height></tt:Resolution>'
             f'<tt:RateControl><tt:FrameRateLimit>{_num(cfg["frame_rate"])}'
-            f'</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval>'
+            f"</tt:FrameRateLimit>"
             f'<tt:BitrateLimit>{_num(cfg["bitrate"])}</tt:BitrateLimit>'
-            f'</tt:RateControl></tt:{cfg["encoding"]}>'
+            f"</tt:RateControl>"
+            f'<tt:Quality>5</tt:Quality>'
             f'</trt2:Configurations>')
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}" '
             f'xmlns:tt="{TT}"><env:Body>'
-            "<trt2:GetVideoEncoderConfigurations2Response>"
+            "<trt2:GetVideoEncoderConfigurationsResponse>"
             + "".join(rows)
-            + "</trt2:GetVideoEncoderConfigurations2Response></env:Body>"
+            + "</trt2:GetVideoEncoderConfigurationsResponse></env:Body>"
             "</env:Envelope>")
 
 
@@ -403,27 +404,26 @@ def _encoder2_options_response():
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}" '
             f'xmlns:tt="{TT}"><env:Body>'
-            "<trt2:GetVideoEncoderConfigurationOptions2Response>"
-            "<trt2:Options><tt:H264>"
-            "<tt:FrameRateRange><tt:Min>1</tt:Min><tt:Max>30</tt:Max>"
-            "</tt:FrameRateRange>"
+            "<trt2:GetVideoEncoderConfigurationOptionsResponse>"
+            "<trt2:Options><tt:Encoding>video/H264</tt:Encoding>"
+            "<tt:QualityRange><tt:Min>0</tt:Min><tt:Max>10</tt:Max>"
+            "</tt:QualityRange>"
+            "<tt:ResolutionsAvailable><tt:Width>1920</tt:Width>"
+            "<tt:Height>1080</tt:Height></tt:ResolutionsAvailable>"
+            "<tt:ResolutionsAvailable><tt:Width>1280</tt:Width>"
+            "<tt:Height>720</tt:Height></tt:ResolutionsAvailable>"
+            "<tt:ResolutionsAvailable><tt:Width>640</tt:Width>"
+            "<tt:Height>480</tt:Height></tt:ResolutionsAvailable>"
             "<tt:BitrateRange><tt:Min>32</tt:Min><tt:Max>8192</tt:Max>"
-            "</tt:BitrateRange>"
-            "<tt:ResolutionAvailable><tt:Width>1920</tt:Width>"
-            "<tt:Height>1080</tt:Height></tt:ResolutionAvailable>"
-            "<tt:ResolutionAvailable><tt:Width>1280</tt:Width>"
-            "<tt:Height>720</tt:Height></tt:ResolutionAvailable>"
-            "<tt:ResolutionAvailable><tt:Width>640</tt:Width>"
-            "<tt:Height>480</tt:Height></tt:ResolutionAvailable>"
-            "</tt:H264></trt2:Options>"
-            "</trt2:GetVideoEncoderConfigurationOptions2Response>"
+            "</tt:BitrateRange></trt2:Options>"
+            "</trt2:GetVideoEncoderConfigurationOptionsResponse>"
             "</env:Body></env:Envelope>")
 
 
 def _set_encoder2_response():
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}">'
-            "<env:Body><trt2:SetVideoEncoderConfiguration2Response/>"
+            "<env:Body><trt2:SetVideoEncoderConfigurationResponse/>"
             "</env:Body></env:Envelope>")
 
 
@@ -497,17 +497,21 @@ class OnvifMock:
 
     def __init__(self, auth="digest", username="admin", password="pass",
                  basic_required=False, rtsp_host="127.0.0.1",
-                 use_media2=False, media2_faults=False):
+                 use_media2=False, media2_faults=False, dump_dir=None):
         self.auth = auth            # "digest" | "basic" | "open"
         self.username = username
         self.password = password
         self.basic_required = basic_required  # digest-off when True
         self.rtsp_host = rtsp_host  # host in GetStreamUri replied URIs
         # M5a Media2 flavor: advertise a Media2 endpoint and answer the
-        # ver20/media operations. `media2_faults` makes GetProfiles2 fault so
+        # ver20/media operations. `media2_faults` makes GetProfiles fault so
         # tests can assert the classic-Media fallback.
         self.use_media2 = use_media2
         self.media2_faults = media2_faults
+        # M5e §8: dump every request envelope to a directory for the
+        # schema-conformance lane.
+        self.dump_dir = dump_dir
+        self._dump_count = 0
         self.presets = [{"token": "preset1", "name": "Home"}]
         # Camera-config state (config-panel backend round-trips).
         self.encoder = {
@@ -576,7 +580,7 @@ class OnvifMock:
             return (200, _set_encoder_response())
         if "GetImagingSettings" in body:
             return (200, _imaging_settings_response(self.imaging["vs0"]))
-        if "GetImagingOptions" in body:
+        if "GetOptions" in body:
             return (200, _imaging_options_response())
         if "SetImagingSettings" in body:
             im = self.imaging["vs0"]
@@ -643,10 +647,10 @@ class OnvifMock:
                 if p["token"] == token:
                     p["name"] = new_name
             return (200, _ptz_empty_response("RenamePresetResponse"))
-        if "DeletePreset" in body:
+        if "RemovePreset" in body:
             token = _grab_tag(body, "PresetToken")
             self.presets = [p for p in self.presets if p["token"] != token]
-            return (200, _ptz_empty_response("DeletePresetResponse"))
+            return (200, _ptz_empty_response("RemovePresetResponse"))
         if "ContinuousMove" in body:
             self._record_ptz_stats(body)
             try:
@@ -668,6 +672,15 @@ class OnvifMock:
         return None
 
     def handle(self, body, headers):
+        # 0. Schema-conformance capture: dump the raw request envelope.
+        if self.dump_dir:
+            with self._lock:
+                self._dump_count += 1
+                n = self._dump_count
+            with open(os.path.join(self.dump_dir, f"req{n:03d}.xml"),
+                      "w", encoding="utf-8") as fh:
+                fh.write(body)
+
         # 1. Authentication gate -------------------------------------------------
         if self.auth == "digest" and not self.basic_required:
             ok, _ = _verify_digest(body, self.username, self.password)
@@ -707,17 +720,19 @@ class OnvifMock:
     def _handle_media2(self, body):
         if not self.use_media2:
             return None
-        if "GetProfiles2" in body:
+        # The ver20/media service reuses the classic op names; the trt2:
+        # prefix is what tells Media2 requests apart from classic Media.
+        if "trt2:GetProfiles" in body:
             if self.media2_faults:
                 return (500, FAULT_RESPONSE)
             return (200, _profiles2_response())
-        if "GetStreamUri2" in body:
+        if "trt2:GetStreamUri" in body:
             return (200, _stream_uri2_response(self.rtsp_host))
-        if "GetVideoEncoderConfigurations2" in body:
+        if "trt2:GetVideoEncoderConfigurations" in body:
             return (200, _encoder2_configs_response(self.encoder))
-        if "GetVideoEncoderConfigurationOptions2" in body:
+        if "trt2:GetVideoEncoderConfigurationOptions" in body:
             return (200, _encoder2_options_response())
-        if "SetVideoEncoderConfiguration2" in body:
+        if "trt2:SetVideoEncoderConfiguration" in body:
             first = next(iter(self.encoder.values()))
             name = _grab_tag(body, "Name")
             encoding = _grab_tag(body, "Encoding")
@@ -728,7 +743,7 @@ class OnvifMock:
             if name:
                 first["name"] = name
             if encoding:
-                first["encoding"] = encoding
+                first["encoding"] = encoding.replace("video/", "")
             if width:
                 first["width"] = int(float(width))
             if height:

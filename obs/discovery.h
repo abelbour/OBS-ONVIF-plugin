@@ -61,4 +61,15 @@ void ProbeOnce(const std::string &host, uint16_t port,
 // live tests (no multicast needed).
 void HandleDiscoveryDatagram(const std::string &xml);
 
+// Manual add-by-IP fallback (M5d): resolves `xaddr` (a device-service URL) with
+// the given credentials through the shared contact path, registers the camera
+// in the live table, persists it, and stores the credentials in the Credential
+// Vault. Returns false + `err` when the camera cannot be reached or identified.
+bool AddManual(const std::string &xaddr, const std::string &username,
+	       const std::string &password, std::string &err);
+
+// Removes a camera (by fingerprint id) from the live table, the persisted
+// store, and the Credential Vault.
+bool RemoveManual(const std::string &cameraId, std::string &err);
+
 } // namespace obs_onvif::discovery

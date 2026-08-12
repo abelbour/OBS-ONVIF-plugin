@@ -386,21 +386,24 @@ std::vector<MediaProfile> OnvifClient::GetProfiles()
 
 std::vector<MediaProfile> OnvifClient::GetProfiles2()
 {
+	// The ver20/media service reuses the classic operation names
+	// (GetProfiles/GetStreamUri/...) in the ver20 namespace, with Media2
+	// profile/config types.
 	const std::string body = PostOperation(
-		media2Service_,
-		"http://www.onvif.org/ver20/media/wsdl/GetProfiles2",
-		"trt2", kTrt2Ns, "<trt2:GetProfiles2/>");
+		media2Service_, "http://www.onvif.org/ver20/media/wsdl/GetProfiles",
+		"trt2", kTrt2Ns, "<trt2:GetProfiles/>");
 
 	tinyxml2::XMLDocument doc;
 	if (!xml::Parse(body, doc))
-		throw std::runtime_error("GetProfiles2: malformed response");
+		throw std::runtime_error("GetProfiles (Media2): malformed response");
 	const tinyxml2::XMLElement *env = doc.RootElement();
 	if (!env)
-		throw std::runtime_error("GetProfiles2: empty response");
+		throw std::runtime_error("GetProfiles (Media2): empty response");
 	const tinyxml2::XMLElement *resp =
-		xml::Child(xml::Child(env, "Body"), "GetProfiles2Response");
+		xml::Child(xml::Child(env, "Body"), "GetProfilesResponse");
 	if (!resp)
-		throw std::runtime_error("GetProfiles2: missing response element");
+		throw std::runtime_error(
+			"GetProfiles (Media2): missing response element");
 
 	std::vector<MediaProfile> profiles;
 	for (const tinyxml2::XMLElement *p : xml::Children(resp, "Profiles")) {
@@ -408,18 +411,21 @@ std::vector<MediaProfile> OnvifClient::GetProfiles2()
 		mp.media2 = true;
 		mp.token = Attr(p, "token");
 		mp.name = xml::ChildText(p, "Name");
-		const tinyxml2::XMLElement *vsc =
-			xml::Child(p, "VideoSourceConfiguration");
-		if (vsc)
-			mp.videoSourceToken = Attr(vsc, "token");
-		const tinyxml2::XMLElement *vec =
-			xml::Child(p, "VideoEncoderConfiguration");
-		if (vec)
-			mp.videoEncoderToken = Attr(vec, "token");
-		const tinyxml2::XMLElement *ptz =
-			xml::Child(p, "PTZConfiguration");
-		if (ptz)
-			mp.ptzConfigToken = Attr(ptz, "token");
+		// Media2 nests the configuration references under Configurations.
+		const tinyxml2::XMLElement *cfgs = xml::Child(p, "Configurations");
+		if (cfgs) {
+			const tinyxml2::XMLElement *vs =
+				xml::Child(cfgs, "VideoSource");
+			if (vs)
+				mp.videoSourceToken = Attr(vs, "token");
+			const tinyxml2::XMLElement *ve =
+				xml::Child(cfgs, "VideoEncoder");
+			if (ve)
+				mp.videoEncoderToken = Attr(ve, "token");
+			const tinyxml2::XMLElement *ptz = xml::Child(cfgs, "PTZ");
+			if (ptz)
+				mp.ptzConfigToken = Attr(ptz, "token");
+		}
 		profiles.push_back(std::move(mp));
 	}
 	return profiles;
@@ -465,33 +471,31 @@ StreamUriResult OnvifClient::GetStreamUri(const MediaProfile &profile)
 
 StreamUriResult OnvifClient::GetStreamUri2(const std::string &profileToken)
 {
+	// Media2 GetStreamUri takes the protocol + profile token and returns the
+	// URI directly (no MediaUri wrapper).
 	const std::string reqBody =
-		"<trt2:GetStreamUri2><trt2:StreamSetup>"
-		"<tt:Stream>RTP-Unicast</tt:Stream>"
-		"<tt:Transport><tt:Protocol>RtspUnicast</tt:Protocol>"
-		"<tt:Tunnel/></tt:Transport></trt2:StreamSetup>"
+		"<trt2:GetStreamUri><trt2:Protocol>RtspUnicast</trt2:Protocol>"
 		"<trt2:ProfileToken>" +
-		profileToken + "</trt2:ProfileToken></trt2:GetStreamUri2>";
+		profileToken + "</trt2:ProfileToken></trt2:GetStreamUri>";
 
 	const std::string body = PostOperation(
-		media2Service_,
-		"http://www.onvif.org/ver20/media/wsdl/GetStreamUri2",
+		media2Service_, "http://www.onvif.org/ver20/media/wsdl/GetStreamUri",
 		"trt2", kTrt2Ns, reqBody);
 
 	tinyxml2::XMLDocument doc;
 	if (!xml::Parse(body, doc))
-		throw std::runtime_error("GetStreamUri2: malformed response");
+		throw std::runtime_error("GetStreamUri (Media2): malformed response");
 	const tinyxml2::XMLElement *env = doc.RootElement();
 	if (!env)
-		throw std::runtime_error("GetStreamUri2: empty response");
+		throw std::runtime_error("GetStreamUri (Media2): empty response");
 	const tinyxml2::XMLElement *resp =
-		xml::Child(xml::Child(env, "Body"), "GetStreamUri2Response");
+		xml::Child(xml::Child(env, "Body"), "GetStreamUriResponse");
 	if (!resp)
-		throw std::runtime_error("GetStreamUri2: missing response element");
+		throw std::runtime_error(
+			"GetStreamUri (Media2): missing response element");
 
 	StreamUriResult out;
-	out.uri = xml::DescendantText(resp, {"MediaUri", "Uri"});
-	out.timeout = xml::DescendantText(resp, {"MediaUri", "Timeout"});
+	out.uri = xml::ChildText(resp, "Uri");
 	return out;
 }
 
@@ -582,13 +586,14 @@ void OnvifClient::RenamePreset(const std::string &profileToken,
 void OnvifClient::DeletePreset(const std::string &profileToken,
 			       const std::string &presetToken)
 {
+	// The ONVIF PTZ spec calls this operation RemovePreset.
 	const std::string reqBody =
-		"<trt:DeletePreset><trt:ProfileToken>" + profileToken +
+		"<trt:RemovePreset><trt:ProfileToken>" + profileToken +
 		"</trt:ProfileToken><trt:PresetToken>" + presetToken +
-		"</trt:PresetToken></trt:DeletePreset>";
+		"</trt:PresetToken></trt:RemovePreset>";
 
 	(void)PostOperation(ptzService_,
-			    "http://www.onvif.org/ver20/ptz/wsdl/DeletePreset",
+			    "http://www.onvif.org/ver20/ptz/wsdl/RemovePreset",
 			    "trt", kPtzNs, reqBody);
 }
 
@@ -831,21 +836,22 @@ OnvifClient::GetVideoEncoderConfigurations2()
 	const std::string body = PostOperation(
 		media2Service_,
 		"http://www.onvif.org/ver20/media/wsdl/"
-		"GetVideoEncoderConfigurations2",
-		"trt2", kTrt2Ns, "<trt2:GetVideoEncoderConfigurations2/>");
+		"GetVideoEncoderConfigurations",
+		"trt2", kTrt2Ns,
+		"<trt2:GetVideoEncoderConfigurations/>");
 
 	tinyxml2::XMLDocument doc;
 	if (!xml::Parse(body, doc))
 		throw std::runtime_error(
-			"GetVideoEncoderConfigurations2: malformed response");
+			"GetVideoEncoderConfigurations (Media2): malformed response");
 	const tinyxml2::XMLElement *env = doc.RootElement();
 	const tinyxml2::XMLElement *resp =
 		env ? xml::Child(xml::Child(env, "Body"),
-				 "GetVideoEncoderConfigurations2Response")
+				 "GetVideoEncoderConfigurationsResponse")
 		    : nullptr;
 	if (!resp)
 		throw std::runtime_error(
-			"GetVideoEncoderConfigurations2: missing response element");
+			"GetVideoEncoderConfigurations (Media2): missing response");
 
 	std::vector<VideoEncoderConfig> out;
 	for (const tinyxml2::XMLElement *c :
@@ -853,28 +859,17 @@ OnvifClient::GetVideoEncoderConfigurations2()
 		VideoEncoderConfig v;
 		v.token = Attr(c, "token");
 		v.name = xml::ChildText(c, "Name");
+		// Media2 VideoEncoder2Configuration: Encoding is a MIME string and
+		// Resolution/RateControl are direct children.
 		v.encoding = xml::ChildText(c, "Encoding");
-		// Media2 nests Resolution/RateControl under the encoding-specific
-		// element (H264/H265/MPEG4/JPEG), not directly under the config.
-		if (!v.encoding.empty()) {
-			const tinyxml2::XMLElement *enc =
-				xml::Child(c, v.encoding.c_str());
-			if (enc) {
-				v.resolution.width = ParseInt(
-					xml::DescendantText(enc,
-							    {"Resolution",
-							     "Width"}));
-				v.resolution.height = ParseInt(
-					xml::DescendantText(enc,
-							    {"Resolution",
-							     "Height"}));
-				v.frameRate = ParseDouble(xml::DescendantText(
-					enc, {"RateControl",
-					      "FrameRateLimit"}));
-				v.bitrate = ParseInt(xml::DescendantText(
-					enc, {"RateControl", "BitrateLimit"}));
-			}
-		}
+		v.resolution.width = ParseInt(
+			xml::DescendantText(c, {"Resolution", "Width"}));
+		v.resolution.height = ParseInt(
+			xml::DescendantText(c, {"Resolution", "Height"}));
+		v.frameRate = ParseDouble(
+			xml::DescendantText(c, {"RateControl", "FrameRateLimit"}));
+		v.bitrate = ParseInt(
+			xml::DescendantText(c, {"RateControl", "BitrateLimit"}));
 		out.push_back(std::move(v));
 	}
 	return out;
@@ -884,85 +879,80 @@ VideoEncoderOptions OnvifClient::GetVideoEncoderConfigurationOptions2(
 	const std::string &encoderToken)
 {
 	const std::string reqBody =
-		"<trt2:GetVideoEncoderConfigurationOptions2>"
+		"<trt2:GetVideoEncoderConfigurationOptions>"
 		"<trt2:ConfigurationToken>" +
 		encoderToken +
 		"</trt2:ConfigurationToken>"
-		"</trt2:GetVideoEncoderConfigurationOptions2>";
+		"</trt2:GetVideoEncoderConfigurationOptions>";
 	const std::string body = PostOperation(
 		media2Service_,
 		"http://www.onvif.org/ver20/media/wsdl/"
-		"GetVideoEncoderConfigurationOptions2",
+		"GetVideoEncoderConfigurationOptions",
 		"trt2", kTrt2Ns, reqBody);
 
 	tinyxml2::XMLDocument doc;
 	if (!xml::Parse(body, doc))
 		throw std::runtime_error(
-			"GetVideoEncoderConfigurationOptions2: malformed response");
+			"GetVideoEncoderConfigurationOptions (Media2): "
+			"malformed response");
 	const tinyxml2::XMLElement *env = doc.RootElement();
 	const tinyxml2::XMLElement *resp =
 		env ? xml::Child(xml::Child(env, "Body"),
-				 "GetVideoEncoderConfigurationOptions2Response")
+				 "GetVideoEncoderConfigurationOptionsResponse")
 		    : nullptr;
 	if (!resp)
 		throw std::runtime_error(
-			"GetVideoEncoderConfigurationOptions2: missing response");
+			"GetVideoEncoderConfigurationOptions (Media2): "
+			"missing response");
 
 	VideoEncoderOptions o;
 	const tinyxml2::XMLElement *options = xml::Child(resp, "Options");
 	if (!options)
 		return o;
-	for (const char *enc : {"H264", "H265", "MPEG4", "JPEG"}) {
-		const tinyxml2::XMLElement *e = xml::Child(options, enc);
-		if (!e)
-			continue;
-		o.minFrameRate = ParseDouble(
-			xml::DescendantText(e, {"FrameRateRange", "Min"}));
-		o.maxFrameRate = ParseDouble(
-			xml::DescendantText(e, {"FrameRateRange", "Max"}));
-		o.minBitrate = ParseInt(
-			xml::DescendantText(e, {"BitrateRange", "Min"}));
-		o.maxBitrate = ParseInt(
-			xml::DescendantText(e, {"BitrateRange", "Max"}));
-		for (const tinyxml2::XMLElement *r :
-		     xml::Children(e, "ResolutionAvailable")) {
-			Resolution res;
-			res.width = ParseInt(xml::ChildText(r, "Width"));
-			res.height = ParseInt(xml::ChildText(r, "Height"));
-			o.resolutions.push_back(res);
-		}
+	// Media2 options carry ResolutionsAvailable + BitrateRange (no frame-rate
+	// range — the dock falls back to its 1..30 default).
+	o.minBitrate = ParseInt(
+		xml::DescendantText(options, {"BitrateRange", "Min"}));
+	o.maxBitrate = ParseInt(
+		xml::DescendantText(options, {"BitrateRange", "Max"}));
+	for (const tinyxml2::XMLElement *r :
+	     xml::Children(options, "ResolutionsAvailable")) {
+		Resolution res;
+		res.width = ParseInt(xml::ChildText(r, "Width"));
+		res.height = ParseInt(xml::ChildText(r, "Height"));
+		o.resolutions.push_back(res);
 	}
 	return o;
 }
 
 void OnvifClient::SetVideoEncoderConfiguration2(const VideoEncoderConfig &cfg)
 {
-	const std::string enc = cfg.encoding.empty() ? "H264" : cfg.encoding;
+	const std::string enc = cfg.encoding.empty() ? "video/H264"
+						     : cfg.encoding;
 	const std::string reqBody =
-		"<trt2:SetVideoEncoderConfiguration2>"
+		"<trt2:SetVideoEncoderConfiguration>"
 		"<trt2:Configuration token=\"" +
 		EscapeXml(cfg.token) + "\"><tt:Name>" + EscapeXml(cfg.name) +
-		"</tt:Name><tt:Encoding>" + EscapeXml(enc) + "</tt:Encoding>"
-		"<tt:" + enc + "><tt:Resolution><tt:Width>" +
+		"</tt:Name><tt:Encoding>" + EscapeXml(enc) +
+		"</tt:Encoding><tt:Resolution><tt:Width>" +
 		FormatInt(cfg.resolution.width) + "</tt:Width><tt:Height>" +
 		FormatInt(cfg.resolution.height) +
 		"</tt:Height></tt:Resolution>"
 		"<tt:RateControl><tt:FrameRateLimit>" +
 		FormatDouble(cfg.frameRate) +
-		"</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval>"
-		"<tt:BitrateLimit>" +
+		"</tt:FrameRateLimit><tt:BitrateLimit>" +
 		FormatInt(cfg.bitrate) +
-		"</tt:BitrateLimit></tt:RateControl></tt:" + enc + ">"
-		"<tt:SessionTimeout>PT10S</tt:SessionTimeout>"
+		"</tt:BitrateLimit></tt:RateControl>"
+		"<tt:Quality>5</tt:Quality>"
 		"</trt2:Configuration>"
 		"<trt2:ForcePersistence>true</trt2:ForcePersistence>"
-		"</trt2:SetVideoEncoderConfiguration2>";
+		"</trt2:SetVideoEncoderConfiguration>";
 
 	// Void op: the empty response body is not parsed.
 	(void)PostOperation(
 		media2Service_,
 		"http://www.onvif.org/ver20/media/wsdl/"
-		"SetVideoEncoderConfiguration2",
+		"SetVideoEncoderConfiguration",
 		"trt2", kTrt2Ns, reqBody);
 }
 
@@ -1009,25 +999,24 @@ ImagingSettings OnvifClient::GetImagingSettings(
 ImagingOptions OnvifClient::GetImagingOptions(
 	const std::string &videoSourceToken)
 {
+	// The ONVIF imaging spec calls this operation GetOptions.
 	const std::string reqBody =
-		"<timg:GetImagingOptions><timg:VideoSourceToken>" +
-		videoSourceToken + "</timg:VideoSourceToken></timg:GetImagingOptions>";
+		"<timg:GetOptions><timg:VideoSourceToken>" +
+		videoSourceToken + "</timg:VideoSourceToken></timg:GetOptions>";
 	const std::string body = PostOperation(
 		imagingService_,
-		"http://www.onvif.org/ver20/imaging/wsdl/GetImagingOptions",
+		"http://www.onvif.org/ver20/imaging/wsdl/GetOptions",
 		"timg", kTimgNs, reqBody);
 
 	tinyxml2::XMLDocument doc;
 	if (!xml::Parse(body, doc))
-		throw std::runtime_error("GetImagingOptions: malformed response");
+		throw std::runtime_error("GetOptions: malformed response");
 	const tinyxml2::XMLElement *env = doc.RootElement();
 	const tinyxml2::XMLElement *resp =
-		env ? xml::Child(xml::Child(env, "Body"),
-				 "GetImagingOptionsResponse")
+		env ? xml::Child(xml::Child(env, "Body"), "GetOptionsResponse")
 		    : nullptr;
 	if (!resp)
-		throw std::runtime_error(
-			"GetImagingOptions: missing response element");
+		throw std::runtime_error("GetOptions: missing response element");
 
 	ImagingOptions o;
 	const tinyxml2::XMLElement *options =

@@ -99,6 +99,15 @@ def main():
             # Phase 3: DHCP-sack presence — Hello refreshes a known camera and
             # Bye takes it offline, both without any SOAP round trip.
             rc = run(binary, "presence", "127.0.0.1", 0, 0, cfgdir)
+
+        if rc == 0:
+            # Phase 4: manual add-by-IP against a fresh mock HTTP server.
+            server_m, port_m = start_http("127.0.0.1", "127.0.0.1")
+            try:
+                rc = run(binary, "manual", "127.0.0.1", port_m, 0, cfgdir)
+            finally:
+                server_m.shutdown()
+                server_m.server_close()
     finally:
         shutil.rmtree(cfgdir, ignore_errors=True)
 

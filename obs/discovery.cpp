@@ -167,14 +167,18 @@ void ProcessContact(const DiscoveredDevice &dev);
 
 // Resolves a discovery contact: identity (fingerprint) + stream URI. Returns
 // false when the device cannot be reached or has no identifiable fingerprint.
-bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out)
+// `initialCreds` (manual add-by-IP) supplies the first GetDeviceInformation
+// attempt; otherwise the default credentials resolver is used.
+bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out,
+		    const registry::CameraCreds *initialCreds = nullptr)
 {
 	if (dev.xaddrs.empty())
 		return false;
 	const std::string xaddr = dev.xaddrs[0];
 
 	const registry::CameraCreds defaultCreds =
-		Creds() ? Creds()("") : registry::CameraCreds{};
+		initialCreds ? *initialCreds
+			     : (Creds() ? Creds()("") : registry::CameraCreds{});
 	auto client = std::make_unique<OnvifClient>(
 		xaddr, defaultCreds.username, defaultCreds.password,
 		/*allowBasicFallback=*/true, /*validateCert=*/false,
@@ -310,12 +314,12 @@ void ProcessHello(const DiscoveredDevice &dev)
 		ProcessContact(dev);
 }
 
-void ProcessContact(const DiscoveredDevice &dev)
+// Folds a resolved contact into the live table: registers a new camera,
+// updates an existing one, persists on change, and reports IP/stream moves
+// through the `onMoved` callback. Shared by discovery processing and the
+// manual add-by-IP path.
+bool ApplyContact(const ContactInfo &ci)
 {
-	ContactInfo ci;
-	if (!ResolveContact(dev, ci))
-		return;
-
 	const uint64_t now = NowMs();
 	bool isNew = false;
 	bool moved = false;
@@ -361,6 +365,15 @@ void ProcessContact(const DiscoveredDevice &dev)
 		PersistAll();
 	if (moved && OnMoved())
 		OnMoved()(ci.fingerprint, ci.stream_uri, ci.credentials);
+	return isNew || moved;
+}
+
+void ProcessContact(const DiscoveredDevice &dev)
+{
+	ContactInfo ci;
+	if (!ResolveContact(dev, ci))
+		return;
+	ApplyContact(ci);
 }
 
 void SweepStale()
@@ -500,6 +513,46 @@ void HandleDiscoveryDatagram(const std::string &xml)
 			break;
 		}
 	}
+}
+
+bool AddManual(const std::string &xaddr, const std::string &username,
+	       const std::string &password, std::string &err)
+{
+	SeedFromStore();
+	DiscoveredDevice dev;
+	dev.xaddrs.push_back(xaddr);
+
+	registry::CameraCreds creds{username, password};
+	ContactInfo ci;
+	if (!ResolveContact(dev, ci, &creds)) {
+		err = "cannot reach an ONVIF camera at " + xaddr;
+		return false;
+	}
+
+	// Persist the camera's credentials in the Credential Vault so later
+	// operations resolve them by fingerprint.
+	Store store(ConfigDir());
+	store.WriteCredential(Store::CameraCredTarget(ci.fingerprint),
+			      username + ":" + password);
+
+	ApplyContact(ci);
+	return true;
+}
+
+bool RemoveManual(const std::string &cameraId, std::string &err)
+{
+	bool erased = false;
+	{
+		std::lock_guard<std::mutex> lock(StateMu());
+		erased = Live().erase(cameraId) != 0;
+	}
+	if (erased) {
+		PersistAll();
+		Store store(ConfigDir());
+		store.DeleteCredential(Store::CameraCredTarget(cameraId));
+	}
+	(void)err;
+	return true;
 }
 
 } // namespace obs_onvif::discovery

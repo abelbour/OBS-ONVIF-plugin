@@ -84,8 +84,8 @@ void RunPhase(const std::string &phase, const std::string &host,
 {
 	(void)httpPort;
 
-	// The presence phase seeds its own store BEFORE Configure so the loop
-	// loads exactly the camera under test (Configure seeds once per process).
+	// The presence/manual phases seed their own store BEFORE Configure so the
+	// loop loads exactly the camera under test (Configure seeds once/process).
 	if (phase == "presence") {
 		const std::string deadXaddr =
 			"http://127.0.0.1:1/onvif/device_service";
@@ -97,6 +97,10 @@ void RunPhase(const std::string &phase, const std::string &host,
 		cam.online = false;
 		cam.lastSeen = 0;
 		CHECK(store.SaveCameras({cam}));
+	} else if (phase == "manual") {
+		// Fresh store so Configure seeds an empty live table.
+		registry::Store store(configDir);
+		CHECK(store.SaveCameras({}));
 	}
 
 	obs_onvif::discovery::Configure(configDir, TestCreds, OnMoved);
@@ -160,6 +164,24 @@ void RunPhase(const std::string &phase, const std::string &host,
 		obs_onvif::discovery::HandleDiscoveryDatagram(
 			PresenceEnvelope("Bye", "aa:bb:cc:dd:ee:ff", deadXaddr));
 		CHECK(!obs_onvif::discovery::Snapshot()[0].online);
+	} else if (phase == "manual") {
+		// Manual add-by-IP against the running mock: resolves through the
+		// shared contact path with the user-supplied credentials, registers,
+		// persists, then removes.
+		const std::string xaddr =
+			"http://127.0.0.1:" + std::to_string(httpPort) +
+			"/onvif/device_service";
+		std::string err;
+		CHECK(obs_onvif::discovery::AddManual(xaddr, "admin", "pass", err));
+		const auto cams = obs_onvif::discovery::Snapshot();
+		CHECK_EQ(cams.size(), size_t(1));
+		CHECK(cams[0].online);
+		CHECK_EQ(cams[0].id,
+			 std::string("sn:DS2CD2032I20170801AACH12345678"));
+		CHECK_EQ(cams[0].lastKnownRTSP.count("profile1"), size_t(1));
+
+		CHECK(obs_onvif::discovery::RemoveManual(cams[0].id, err));
+		CHECK_EQ(obs_onvif::discovery::Snapshot().size(), size_t(0));
 	}
 }
 

@@ -83,6 +83,21 @@ if(BUILD_TESTING)
 		)
 	endif()
 
+	# Schema-conformance lane (§8): captures every request envelope the
+	# client / config / Media2 live tests emit against dump-mode mocks and
+	# validates them against the mirrored ONVIF schemas. Fails on drift.
+	if(Python3_FOUND)
+		add_test(
+			NAME schema_live
+			COMMAND ${Python3_EXECUTABLE}
+				${CMAKE_CURRENT_SOURCE_DIR}/run_schema_test.py
+				$<TARGET_FILE:onvif_client_test>
+				$<TARGET_FILE:config_live_test>
+				$<TARGET_FILE:media2_live_test>
+				${CMAKE_CURRENT_SOURCE_DIR}/..
+		)
+	endif()
+
 	# Live registry flow against the mock: discovery round-trip seeds a
 	# camera, a re-bound mock host is detected as an IP move, and the mapped
 	# source URL rewrite is observed.
