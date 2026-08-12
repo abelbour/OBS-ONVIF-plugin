@@ -58,14 +58,13 @@ function Package {
 
     Remove-Item @RemoveArgs
 
-    # Bundle license, third-party notices, README, and the user guide INSIDE the
-    # plugin folder so extracting the zip into %APPDATA%\obs-studio\plugins\
-    # keeps everything under plugins\obs-onvif\ (no stray files in plugins\).
+    # Bundle license, third-party notices, README, and the user guide into the
+    # archive so recipients have them next to the plugin DLL.
     foreach ( $Doc in @( 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.md' ) ) {
-        Copy-Item -Path "${ProjectRoot}/${Doc}" -Destination "${ProjectRoot}/release/${Configuration}/obs-onvif/" -Force
+        Copy-Item -Path "${ProjectRoot}/${Doc}" -Destination "${ProjectRoot}/release/${Configuration}/" -Force
     }
-    New-Item -ItemType Directory -Force -Path "${ProjectRoot}/release/${Configuration}/obs-onvif/docs" | Out-Null
-    Copy-Item -Path "${ProjectRoot}/docs/USER_GUIDE.md" -Destination "${ProjectRoot}/release/${Configuration}/obs-onvif/docs/" -Force
+    New-Item -ItemType Directory -Force -Path "${ProjectRoot}/release/${Configuration}/docs" | Out-Null
+    Copy-Item -Path "${ProjectRoot}/docs/USER_GUIDE.md" -Destination "${ProjectRoot}/release/${Configuration}/docs/" -Force
 
     Log-Group "Archiving ${ProductName}..."
     $CompressArgs = @{

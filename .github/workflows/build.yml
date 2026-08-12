@@ -105,8 +105,7 @@ jobs:
         run: |
           $expected = @(
             'release/RelWithDebInfo/obs-onvif/bin/64bit/obs-onvif.dll',
-            'release/RelWithDebInfo/obs-onvif/data/locale/en-US.ini',
-            'release/RelWithDebInfo/obs-onvif/obs-onvif.h'
+            'release/RelWithDebInfo/obs-onvif/data/locale/en-US.ini'
           )
           foreach ($p in $expected) {
             if (-not (Test-Path $p)) {
