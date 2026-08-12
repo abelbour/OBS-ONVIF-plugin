@@ -82,8 +82,24 @@ std::string PresenceEnvelope(const char *action, const std::string &mac,
 void RunPhase(const std::string &phase, const std::string &host,
 	      int httpPort, int udpPort, const std::string &configDir)
 {
-	obs_onvif::discovery::Configure(configDir, TestCreds, OnMoved);
 	(void)httpPort;
+
+	// The presence phase seeds its own store BEFORE Configure so the loop
+	// loads exactly the camera under test (Configure seeds once per process).
+	if (phase == "presence") {
+		const std::string deadXaddr =
+			"http://127.0.0.1:1/onvif/device_service";
+		registry::Store store(configDir);
+		registry::Camera cam;
+		cam.id = "mac:aa:bb:cc:dd:ee:ff";
+		cam.name = "MAC-CAM";
+		cam.xaddr = deadXaddr;
+		cam.online = false;
+		cam.lastSeen = 0;
+		CHECK(store.SaveCameras({cam}));
+	}
+
+	obs_onvif::discovery::Configure(configDir, TestCreds, OnMoved);
 
 	if (phase == "seed") {
 		// The UDP responder always listens on 127.0.0.1; the ProbeMatch
@@ -131,17 +147,6 @@ void RunPhase(const std::string &phase, const std::string &host,
 		// so any resolution attempt would fail — proving the cheap paths.
 		const std::string deadXaddr =
 			"http://127.0.0.1:1/onvif/device_service";
-		{
-			registry::Store store(configDir);
-			registry::Camera cam;
-			cam.id = "mac:aa:bb:cc:dd:ee:ff";
-			cam.name = "MAC-CAM";
-			cam.xaddr = deadXaddr;
-			cam.online = false;
-			cam.lastSeen = 0;
-			CHECK(store.SaveCameras({cam}));
-		}
-		obs_onvif::discovery::Configure(configDir, TestCreds, OnMoved);
 		CHECK_EQ(obs_onvif::discovery::Snapshot().size(), size_t(1));
 		CHECK(!obs_onvif::discovery::Snapshot()[0].online);
 

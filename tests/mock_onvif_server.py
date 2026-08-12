@@ -551,6 +551,15 @@ class OnvifHandler(http.server.BaseHTTPRequestHandler):
         with mock._lock:
             mock.connection_count += 1
 
+    def handle(self):
+        # A keep-alive client may close the connection between requests
+        # (per-call WinHTTP); that surfaces as a reset on the next read and is
+        # not an error worth tracing.
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            self.close_connection = True
+
     def do_POST(self):
         n = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(n).decode("utf-8", errors="replace")
