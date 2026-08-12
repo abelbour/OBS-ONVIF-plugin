@@ -609,17 +609,18 @@ void OnvifClient::ContinuousMove(const std::string &profileToken, double pan,
 				 double timeoutSeconds, AbortHandle *abort)
 {
 	// Fixed-buffer velocity injection (M4 §6.8): the body is built with
-	// snprintf so the hot path never pays for string formatting churn.
-	char velocity[192];
-	std::snprintf(velocity, sizeof velocity,
-		      "<trt:Velocity><tt:PanTilt x=\"%.3f\" y=\"%.3f\" "
-		      "space=\"%s\"/><tt:Zoom x=\"%.3f\" space=\"%s\"/>"
-		      "</trt:Velocity>",
-		      pan, tilt, kVelocityPanTiltSpace, zoom,
-		      kVelocityZoomSpace);
+	// snprintf so the hot path never pays for string formatting churn. The
+	// buffer must hold the full element (the space URIs alone are ~140 bytes).
+	char velocity[256];
+	const int velLen = std::snprintf(
+		velocity, sizeof velocity,
+		"<trt:Velocity><tt:PanTilt x=\"%.3f\" y=\"%.3f\" "
+		"space=\"%s\"/><tt:Zoom x=\"%.3f\" space=\"%s\"/>"
+		"</trt:Velocity>",
+		pan, tilt, kVelocityPanTiltSpace, zoom, kVelocityZoomSpace);
 	std::string reqBody = "<trt:ContinuousMove><trt:ProfileToken>" +
 			      profileToken + "</trt:ProfileToken>" +
-			      velocity;
+			      (velLen < 0 ? std::string() : std::string(velocity));
 	if (timeoutSeconds > 0.0) {
 		const int totalSec = (int)timeoutSeconds;
 		const int hours = totalSec / 3600;
