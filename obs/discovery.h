@@ -54,4 +54,11 @@ std::vector<registry::Camera> Snapshot();
 void ProbeOnce(const std::string &host, uint16_t port,
 	       const std::string &messageId);
 
+// Parses one WS-Discovery datagram and applies it to the live table the way
+// the background loop does: a Hello refreshes presence for a known camera
+// (or resolves when new/on a new address), a Bye marks the device offline
+// immediately, and a ProbeMatch is fully resolved. Shared by the loop and the
+// live tests (no multicast needed).
+void HandleDiscoveryDatagram(const std::string &xml);
+
 } // namespace obs_onvif::discovery

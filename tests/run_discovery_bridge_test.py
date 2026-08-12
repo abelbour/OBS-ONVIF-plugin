@@ -94,6 +94,11 @@ def main():
             finally:
                 server_b.shutdown()
                 server_b.server_close()
+
+        if rc == 0:
+            # Phase 3: DHCP-sack presence — Hello refreshes a known camera and
+            # Bye takes it offline, both without any SOAP round trip.
+            rc = run(binary, "presence", "127.0.0.1", 0, 0, cfgdir)
     finally:
         shutil.rmtree(cfgdir, ignore_errors=True)
 

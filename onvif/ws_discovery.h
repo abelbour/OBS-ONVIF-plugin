@@ -9,6 +9,12 @@ namespace obs_onvif {
 constexpr uint16_t kDiscoveryPort = 3702;
 constexpr const char *kDiscoveryGroup = "239.255.255.250";
 
+// The kind of WS-Discovery message a parsed device entry came from. The
+// discovery loop uses this to apply each entry cheaply: a Hello only refreshes
+// presence for a known camera (no SOAP), a Bye marks it offline immediately,
+// and only ProbeMatches (or an unknown/new-address Hello) needs full resolution.
+enum class DiscoveryMsgType { Unknown, ProbeMatches, Hello, Bye };
+
 struct DiscoveredDevice {
 	std::vector<std::string> xaddrs; // whitespace-split XAddrs
 	std::vector<std::string> types;  // contract type local names
@@ -16,6 +22,7 @@ struct DiscoveredDevice {
 	std::string scopes;              // raw scopes string
 	std::string uuid;                // wsa:Address endpoint uuid
 	std::string relatesTo;           // probe message id (header wsa:RelatesTo)
+	DiscoveryMsgType type = DiscoveryMsgType::Unknown;
 	uint64_t lastSeen = 0;           // monotonic ms, managed by the caller
 };
 

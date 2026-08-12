@@ -9,6 +9,7 @@
 using obs_onvif::BuildProbe;
 using obs_onvif::CloseUdpSocket;
 using obs_onvif::DiscoveredDevice;
+using obs_onvif::DiscoveryMsgType;
 using obs_onvif::kDiscoveryPort;
 using obs_onvif::OpenUdpSocket;
 using obs_onvif::ParseDiscoveryResponse;
@@ -63,6 +64,26 @@ static const char *kHello =
       <d:Scopes>onvif://www.onvif.org/name/Cam01 onvif://www.onvif.org/mac/aa:bb:cc:dd:ee:ff</d:Scopes>
       <d:XAddrs>http://192.168.1.77:8000/onvif/device_service</d:XAddrs>
     </d:Hello>
+  </e:Body>
+</e:Envelope>)";
+
+// WS-Discovery Bye (decommission), same payload shape.
+static const char *kBye =
+    R"(<?xml version="1.0"?>
+<e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope"
+            xmlns:w="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+            xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+  <e:Header>
+    <w:MessageID>urn:uuid:e1e2e3e4-e5e6-4a1b-9c2d-0deadbee1234</w:MessageID>
+    <w:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To>
+    <w:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Bye</w:Action>
+  </e:Header>
+  <e:Body>
+    <d:Bye>
+      <w:Address>urn:uuid:7a7b7c7d-7e7f-4a1b-9c2d-c0ffee123456</w:Address>
+      <d:Types>dn:NetworkVideoTransmitter</d:Types>
+      <d:XAddrs>http://192.168.1.77:8000/onvif/device_service</d:XAddrs>
+    </d:Bye>
   </e:Body>
 </e:Envelope>)";
 
@@ -137,6 +158,26 @@ static void TestParseGarbage()
 	CHECK_EQ(devs.size(), size_t(0));
 }
 
+// The parsed message type drives the loop's cheap Hello/Bye paths.
+static void TestMessageTypes()
+{
+	std::vector<DiscoveredDevice> devs;
+	CHECK(ParseDiscoveryResponse(kProbeMatch, devs));
+	CHECK(devs[0].type == DiscoveryMsgType::ProbeMatches);
+
+	devs.clear();
+	CHECK(ParseDiscoveryResponse(kHello, devs));
+	CHECK(devs[0].type == DiscoveryMsgType::Hello);
+
+	devs.clear();
+	CHECK(ParseDiscoveryResponse(kBye, devs));
+	CHECK_EQ(devs.size(), size_t(1));
+	CHECK(devs[0].type == DiscoveryMsgType::Bye);
+	CHECK_EQ(devs[0].xaddrs.size(), size_t(1));
+	CHECK_EQ(devs[0].xaddrs[0],
+		 std::string("http://192.168.1.77:8000/onvif/device_service"));
+}
+
 // Live loopback round-trip against tests/mock_onvif_server.py's UDP responder.
 // Invoked via ctest: ws_discovery_test <host> <port>
 static void TestLiveUdpRoundTrip(int argc, char **argv)
@@ -175,6 +216,7 @@ int main(int argc, char **argv)
 	TestParseProbeMatches();
 	TestParseHello();
 	TestParseGarbage();
+	TestMessageTypes();
 	TestLiveUdpRoundTrip(argc, argv);
 	(void)kDiscoveryPort;
 	RUN_TESTS("ws_discovery");

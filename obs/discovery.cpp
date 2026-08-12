@@ -160,6 +160,11 @@ struct ContactInfo {
 	std::string credentials;
 };
 
+// Full resolution of a ProbeMatch (or an unknown/new-address Hello): identity
+// fingerprint + stream URI, folded into the live table. Forward-declared so
+// the cheap Hello/Bye paths can fall back to it.
+void ProcessContact(const DiscoveredDevice &dev);
+
 // Resolves a discovery contact: identity (fingerprint) + stream URI. Returns
 // false when the device cannot be reached or has no identifiable fingerprint.
 bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out)
@@ -234,6 +239,75 @@ bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out)
 	}
 
 	return true;
+}
+
+// "mac:AA:BB:CC:DD:EE:FF" fingerprint from a discovery scopes string, or an
+// empty string when no MAC scope is present. Lets a Hello/Bye be matched to a
+// known camera without a SOAP round trip.
+std::string ScopeMacFingerprint(const std::string &scopes)
+{
+	const std::string mac = ParseScopeMac(scopes);
+	return mac.empty() ? std::string() : "mac:" + mac;
+}
+
+// A WS-Discovery Bye: mark the matching known camera offline immediately.
+// No SOAP; matches by advertised XAddr (the fingerprint is not derivable from
+// a Bye without a MAC scope).
+void ProcessBye(const DiscoveredDevice &dev)
+{
+	if (dev.xaddrs.empty())
+		return;
+	bool changed = false;
+	{
+		std::lock_guard<std::mutex> lock(StateMu());
+		for (auto &kv : Live()) {
+			for (const std::string &xa : dev.xaddrs) {
+				if (kv.second.xaddr == xa &&
+				    kv.second.online) {
+					kv.second.online = false;
+					changed = true;
+					break;
+				}
+			}
+		}
+	}
+	if (changed)
+		PersistAll();
+}
+
+// A WS-Discovery Hello. For a camera already known at the same address this is
+// a pure presence refresh (no SOAP — the DHCP-sack win). An unknown device or
+// one announcing a *new* address goes through full resolution so an IP change
+// is still detected and reported.
+void ProcessHello(const DiscoveredDevice &dev)
+{
+	const std::string fp = ScopeMacFingerprint(dev.scopes);
+	if (fp.empty()) {
+		ProcessContact(dev);
+		return;
+	}
+	const uint64_t now = NowMs();
+	bool known = false;
+	bool sameAddress = false;
+	{
+		std::lock_guard<std::mutex> lock(StateMu());
+		auto it = Live().find(fp);
+		if (it != Live().end()) {
+			known = true;
+			for (const std::string &xa : dev.xaddrs) {
+				if (xa == it->second.xaddr) {
+					sameAddress = true;
+					break;
+				}
+			}
+			if (sameAddress) {
+				it->second.online = true;
+				it->second.lastSeen = now;
+			}
+		}
+	}
+	if (!known || !sameAddress)
+		ProcessContact(dev);
 }
 
 void ProcessContact(const DiscoveredDevice &dev)
@@ -313,13 +387,20 @@ void LoopBody()
 
 	uint64_t nextHeartbeat = NowMs() + (uint64_t)HeartbeatS() * 1000;
 	while (!StopFlag().load()) {
-		std::string msg;
-		if (RecvUdp(sock, msg, /*timeoutMs=*/500) > 0) {
-			std::vector<DiscoveredDevice> devs;
-			if (ParseDiscoveryResponse(msg, devs)) {
-				for (const auto &dev : devs)
-					ProcessContact(dev);
-			}
+		// Drain the pending datagram batch (DHCP-sack: a Hello/Bye burst
+		// during a network event is cheap — no SOAP — but must not be
+		// starved behind slow ProbeMatch resolution). The first read
+		// blocks up to 500 ms; the rest are zero-timeout drains.
+		int batch = 0;
+		for (;;) {
+			std::string msg;
+			const long n =
+				RecvUdp(sock, msg, batch == 0 ? 500 : 0);
+			if (n <= 0)
+				break;
+			HandleDiscoveryDatagram(msg);
+			if (++batch >= 128)
+				break;
 		}
 		if (NowMs() >= nextHeartbeat) {
 			SendUdp(sock, BuildProbe("urn:uuid:obs-onvif-heartbeat"),
@@ -395,15 +476,30 @@ void ProbeOnce(const std::string &host, uint16_t port,
 		return;
 	if (SendUdp(sock, BuildProbe(messageId), host, port) > 0) {
 		std::string reply;
-		if (RecvUdp(sock, reply, /*timeoutMs=*/5000) > 0) {
-			std::vector<DiscoveredDevice> devs;
-			if (ParseDiscoveryResponse(reply, devs)) {
-				for (const auto &dev : devs)
-					ProcessContact(dev);
-			}
-		}
+		if (RecvUdp(sock, reply, /*timeoutMs=*/5000) > 0)
+			HandleDiscoveryDatagram(reply);
 	}
 	CloseUdpSocket(sock);
+}
+
+void HandleDiscoveryDatagram(const std::string &xml)
+{
+	std::vector<DiscoveredDevice> devs;
+	if (!ParseDiscoveryResponse(xml, devs))
+		return;
+	for (const auto &dev : devs) {
+		switch (dev.type) {
+		case DiscoveryMsgType::Bye:
+			ProcessBye(dev);
+			break;
+		case DiscoveryMsgType::Hello:
+			ProcessHello(dev);
+			break;
+		default:
+			ProcessContact(dev);
+			break;
+		}
+	}
 }
 
 } // namespace obs_onvif::discovery

@@ -124,10 +124,22 @@ bool ParseDiscoveryResponse(const std::string &xml,
 	if (!body)
 		return false;
 
+	// Classify the message: ProbeMatches wraps ProbeMatch entries; Hello
+	// and Bye sit directly under Body (and may appear in a ProbeMatch-style
+	// envelope from loose implementations, so Body-level wins).
+	DiscoveryMsgType type = DiscoveryMsgType::Unknown;
+	if (xml::Child(body, "ProbeMatches"))
+		type = DiscoveryMsgType::ProbeMatches;
+	else if (xml::Child(body, "Bye"))
+		type = DiscoveryMsgType::Bye;
+	else if (xml::Child(body, "Hello"))
+		type = DiscoveryMsgType::Hello;
+
 	bool found = false;
 	for (const tinyxml2::XMLElement *el : EntryElements(body)) {
 		DiscoveredDevice dev;
 		dev.relatesTo = relatesTo;
+		dev.type = type;
 		dev.xaddrs = SplitTokens(xml::ChildText(el, "XAddrs"));
 		for (const std::string &t :
 		     SplitTokens(xml::ChildText(el, "Types"))) {
@@ -164,6 +176,13 @@ intptr_t OpenUdpSocket(uint16_t bindPort, bool joinMulticast, bool reuseAddr)
 			closesocket(sock);
 			return -1;
 		}
+		// DHCP-sack at scale: during a network event a burst of Hello/
+		// Bye announcements can arrive faster than the (SOAP-resolving)
+		// loop drains them. A larger receive buffer absorbs the burst so
+		// presence/TTL updates are not dropped.
+		int rcvbuf = 256 * 1024;
+		setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char *)&rcvbuf,
+			   sizeof rcvbuf);
 	}
 
 	sockaddr_in addr{};
