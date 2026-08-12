@@ -1,4 +1,4 @@
-# OBS ONVIF Plugin — Plan
+﻿# OBS ONVIF Plugin — Plan
 
 ## 1. Vision
 
@@ -36,7 +36,7 @@ A Windows-native OBS Studio plugin that:
 - Stream default: when auto-pairing, pick the **highest-resolution profile (main)**; user can override per source.
 - URL auth: when rewriting an RTSP URL whose old value embedded `user:pass@`, **preserve those credentials** in the rewritten URL if `GetStreamUri` returns one without them.
 - Hotkeys: **pre-bind presets 1–9** (Ctrl+Alt+1..9); user can rebind in OBS → Settings → Hotkeys.
-- Distribution: **public repo, GPLv3, zip-only artifacts**, published to the OBS forum resources. **en-US only** locale (structure ready for later translation).
+- Distribution: **public repo, GPLv3, zip-only artifacts**, published to the OBS forum resources. **en-US (source) + es-ES** locales (structure ready for more translations).
 - Manual HW support: Hikvision, Dahua/OEM, and non-PT/2D fixed devices. UI degrades gracefully when a camera reports no imaging/PTZ capabilities.
 
 ## Non-goals (MVP)

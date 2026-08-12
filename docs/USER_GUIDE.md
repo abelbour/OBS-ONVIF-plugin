@@ -158,6 +158,6 @@ immediately.
 ## 11. Limitations
 
 - Single LAN subnet only (multicast discovery); no multi-VLAN scanning.
-- en-US locale only.
+- Locales: en-US (source) and es-ES provided; OBS UI language is used.
 - No Event/Recording/Analytics services — only device, media, PTZ, imaging,
   and display (text OSD).
