@@ -64,4 +64,10 @@ target_sources(${CMAKE_PROJECT_NAME}
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
 
+# The public plugin ABI header ships in the release zip so external consumers
+# can link against obs-onvif.h (PLAN.md M0 zip layout).
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/obs/obs-onvif.h"
+        DESTINATION "${CMAKE_PROJECT_NAME}"
+        COMPONENT Runtime)
+
 add_subdirectory(tests)
