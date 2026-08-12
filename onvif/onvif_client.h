@@ -154,8 +154,10 @@ public:
 	// Profiles carry `MediaProfile.media2` so the caller routes stream URIs /
 	// encoder config to the owning service.
 	std::vector<MediaProfile> GetProfiles();
+	std::vector<MediaProfile> GetProfiles2();
 	StreamUriResult GetStreamUri(const std::string &profileToken);
 	StreamUriResult GetStreamUri(const MediaProfile &profile);
+	StreamUriResult GetStreamUri2(const std::string &profileToken);
 
 	// PTZ service (http://www.onvif.org/ver20/ptz/wsdl).
 	void GotoPreset(const std::string &profileToken,
