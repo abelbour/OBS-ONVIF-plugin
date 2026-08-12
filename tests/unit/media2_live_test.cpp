@@ -71,8 +71,8 @@ int main(int argc, char **argv)
 		const auto opts = client.GetVideoEncoderConfigurationOptions2(
 			profiles[0].videoEncoderToken);
 		// Media2 options carry bitrate + resolutions but no frame-rate range.
-		CHECK(opts.max_bitrate > 0);
-		CHECK_EQ(opts.max_frame_rate, 0.0);
+		CHECK(opts.maxBitrate > 0);
+		CHECK_EQ(opts.maxFrameRate, 0.0);
 		CHECK(opts.resolutions.size() >= 3);
 
 		enc.resolution.width = 1280;
