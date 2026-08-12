@@ -214,6 +214,30 @@ bool Worker::Stop(const Camera &cam, std::string &err)
 	}, err);
 }
 
+bool Worker::AbsoluteMove(const Camera &cam, double pan, double tilt,
+			  double zoom, std::string &err)
+{
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.AbsoluteMove(profile.token, pan, tilt, zoom);
+	}, err);
+}
+
+bool Worker::RelativeMove(const Camera &cam, double pan, double tilt,
+			  double zoom, std::string &err)
+{
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.RelativeMove(profile.token, pan, tilt, zoom);
+	}, err);
+}
+
 bool Worker::MoveAbortable(const Camera &cam, double pan, double tilt,
 			   double zoom, unsigned timeoutSeconds,
 			   obs_onvif::AbortHandle &abort, std::string &err)
@@ -338,7 +362,12 @@ bool Worker::EncoderConfig(const Camera &cam,
 	if (!ResolveProfile(client, profile, err))
 		return false;
 	try {
-		const auto configs = client.GetVideoEncoderConfigurations();
+		// Media2 profiles are configured through the Media2 service
+		// (PLAN.md §Profile-selection rule).
+		const auto configs =
+			profile.media2
+				? client.GetVideoEncoderConfigurations2()
+				: client.GetVideoEncoderConfigurations();
 		for (const auto &cfg : configs) {
 			if (cfg.token == profile.videoEncoderToken) {
 				out = cfg;
@@ -364,8 +393,12 @@ bool Worker::EncoderOptions(const Camera &cam,
 	if (!ResolveProfile(client, profile, err))
 		return false;
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
-		out = c.GetVideoEncoderConfigurationOptions(
-			profile.videoEncoderToken);
+		if (profile.media2)
+			out = c.GetVideoEncoderConfigurationOptions2(
+				profile.videoEncoderToken);
+		else
+			out = c.GetVideoEncoderConfigurationOptions(
+				profile.videoEncoderToken);
 	}, err);
 }
 
@@ -382,7 +415,10 @@ bool Worker::SetEncoderConfig(const Camera &cam,
 	obs_onvif::VideoEncoderConfig toSet = cfg;
 	toSet.token = profile.videoEncoderToken; // always target the profile's
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
-		c.SetVideoEncoderConfiguration(toSet);
+		if (profile.media2)
+			c.SetVideoEncoderConfiguration2(toSet);
+		else
+			c.SetVideoEncoderConfiguration(toSet);
 	}, err);
 }
 
@@ -452,6 +488,38 @@ bool Worker::SetNetworkInterface(const Camera &cam,
 		return false;
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
 		c.SetNetworkInterface(ni);
+	}, err);
+}
+
+bool Worker::GetHostname(const Camera &cam, std::string &out, std::string &err)
+{
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		out = c.GetHostname();
+	}, err);
+}
+
+bool Worker::SetHostname(const Camera &cam, const std::string &name,
+			 std::string &err)
+{
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.SetHostname(name);
+	}, err);
+}
+
+bool Worker::SetNTP(const Camera &cam, const std::vector<std::string> &servers,
+		    bool dhcp, std::string &err)
+{
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.SetNTP(servers, dhcp);
 	}, err);
 }
 

@@ -838,6 +838,18 @@ Background and governing decisions in PLAN.md §PTZ command transport & motor co
 
 ---
 
+## 7.5 Milestone 5 — remaining in-scope ONVIF coverage (code-completable)
+
+Closes the code items still open after M4 (all CI-gated; nothing needs hardware):
+
+- **M5a Media2** (`onvif_client.{h,cpp}`, `worker.{h,cpp}`, mock, tests): parse `Capabilities/Media2/XAddr`; `GetProfiles2`/`GetStreamUri2`/`GetVideoEncoderConfigurations2`/`GetVideoEncoderConfigurationOptions2`/`SetVideoEncoderConfiguration2` (Media2 `VideoEncoderConfiguration2` shape — encoding-specific nested `H264`/`H265`/`MPEG4`/`JPEG` element). Profile selection is **Media2-first, classic-fallback**: `GetProfiles()` tries Media2 when the endpoint exists and falls back to classic on fault/empty; `MediaProfile.media2` records ownership so `GetStreamUri`/encoder ops hit the same service as the profile token (§Profile-selection rule). A Media2 fault is never a hard failure. Mock gains a `use_media2` flavor (Media2 caps/profiles/stream/encoder) plus a `media2_faults` mode; `media2_live` asserts the Media2 path and the classic fallback.
+- **M5b Device network config** (`onvif_client.{h,cpp}`, `worker.{h,cpp}`, `obs/abi.{h,cpp}`, `obs/dock.cpp`, mock, tests): `SetNTP` (FromDHCP + manual IPv4 servers) and `SetHostname` on the device service; Worker wrappers; ABI `set_ntp`/`set_hostname`; dock **Network** tab gains a hostname field + NTP toggle/server field; mock `SetNTP`/`SetHostname` round-trips asserted in `config_live`.
+- **M5c PTZ absolute/relative moves** (`onvif_client.{h,cpp}`, `worker.{h,cpp}`, mock, tests): `AbsoluteMove`/`RelativeMove` typed calls (position/translation bodies, `Absolute/TranslationGenericSpace`); Worker wrappers; mock round-trip in `onvif_client_test`/`client_live`. Exposed via the Worker API for future ABI/UI use (the M4 controller intentionally stays continuous-move-only).
+- **M5d Manual add-by-IP** (`obs/discovery.{h,cpp}`, `obs/dock.cpp`, mock/tests): `AddManual(xaddr, user, pass)` resolves a camera by IP/port/creds through the shared contact path (fingerprint + stream URI), inserts into the live table, persists, and stores creds in the Credential Vault; `RemoveManual` deletes it. Dock **Cameras** tab gains **Add by IP…** (host/port/username/password + Test connection) and **Remove**. `discovery_live` gains a `manual` phase against the mock.
+- **M5e Schema-conformance CI (§8)** (`tools/fetch_onvif_schemas.py`, `third_party/onvif-schemas/`, `tools/validate_envelopes.py`, `tests/mock_onvif_server.py` dump mode, `tests/run_schema_test.py`, CI): mirror the current onvif.org `devicemgmt`/`media`+`media2`/`ptz`/`imaging`/`display` WSDL+XSD set (with the common `onvif.xsd`); the mock dumps every request envelope; `validate_envelopes.py` (python `lxml`) validates each SOAP body operation element against the matching service schema. CI installs `lxml` and runs `schema_live` (capture + validate). **This lane fails the build on any schema drift** — the follow-recent-to-compat safety net.
+
+---
+
 ## 8. Schema-conformance CI
 
 Mirror current onvif.org XSD/WSDL into `third_party/onvif-schemas/` via `tools/fetch_onvif_schemas.py`:

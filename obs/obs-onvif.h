@@ -164,6 +164,13 @@ typedef struct obs_cast_abi_s {
 	void (*release_osds)(obs_cast_osd_config_t *out, int count);
 	int (*set_osd)(const char *cam, const obs_cast_osd_config_t *osd);
 	int (*delete_osd)(const char *cam, const char *osd_token);
+
+	/* device hostname + NTP (M5b). get_hostname returns the current name;
+	 * set_hostname sets it; set_ntp takes a comma-separated IPv4 server list
+	 * (ignored when ntp_enabled is set) and the DHCP NTP flag. */
+	int (*get_hostname)(const char *cam, char *name_out, size_t cap);
+	int (*set_hostname)(const char *cam, const char *name);
+	int (*set_ntp)(const char *cam, int ntp_enabled, const char *servers_csv);
 } obs_cast_abi_t;
 
 OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void);

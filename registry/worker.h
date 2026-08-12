@@ -47,6 +47,11 @@ public:
 	bool Move(const Camera &cam, double pan, double tilt, double zoom,
 		  std::string &err);
 	bool Stop(const Camera &cam, std::string &err);
+	// Absolute/relative position moves (M5c), first-profile targeted.
+	bool AbsoluteMove(const Camera &cam, double pan, double tilt, double zoom,
+			  std::string &err);
+	bool RelativeMove(const Camera &cam, double pan, double tilt, double zoom,
+			  std::string &err);
 	// PTZ controller executor entry points (M4 §6.8): route through the
 	// profile/service cache and pass an AbortHandle to the transport so an
 	// immediate Stop can cancel the in-flight move.
@@ -96,6 +101,12 @@ public:
 	bool SetNetworkInterface(const Camera &cam,
 				const obs_onvif::NetworkInterfaceInfo &ni,
 				std::string &err);
+	// Device hostname + NTP (M5b).
+	bool GetHostname(const Camera &cam, std::string &out, std::string &err);
+	bool SetHostname(const Camera &cam, const std::string &name,
+			 std::string &err);
+	bool SetNTP(const Camera &cam, const std::vector<std::string> &servers,
+		    bool dhcp, std::string &err);
 	bool OSDs(const Camera &cam,
 		  std::vector<obs_onvif::OSDConfig> &out, std::string &err);
 	bool SetOSD(const Camera &cam, const obs_onvif::OSDConfig &cfg,

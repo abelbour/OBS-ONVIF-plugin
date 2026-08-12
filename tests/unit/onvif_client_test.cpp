@@ -99,6 +99,10 @@ int main(int argc, char **argv)
 	client.ContinuousMove(profiles[0].token, 0.1, -0.2, 0.05, 0.5);
 	client.Stop(profiles[0].token);
 
+	// Absolute/relative position moves round-trip (M5c).
+	client.AbsoluteMove(profiles[0].token, 0.1, -0.2, 0.05);
+	client.RelativeMove(profiles[0].token, 0.1, -0.2, 0.05);
+
 	// Transport failure surfaces as an exception.
 	OnvifClient broken("http://127.0.0.1:1/onvif/device_service",
 			   "admin", "pass", true, false, 1000);

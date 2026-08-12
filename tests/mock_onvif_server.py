@@ -294,6 +294,139 @@ def _delete_osd_response():
             "</env:Body></env:Envelope>")
 
 
+def _get_hostname_response(name):
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:tds="{TDS}">'
+            f"<env:Body><tds:GetHostnameResponse><tds:Name>{name}</tds:Name>"
+            "</tds:GetHostnameResponse></env:Body></env:Envelope>")
+
+
+def _set_hostname_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:tds="{TDS}">'
+            "<env:Body><tds:SetHostnameResponse/>"
+            "</env:Body></env:Envelope>")
+
+
+def _set_ntp_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:tds="{TDS}">'
+            "<env:Body><tds:SetNTPResponse/>"
+            "</env:Body></env:Envelope>")
+
+# -- Media2 flavor (M5a: ver20/media/wsdl) ------------------------------------
+TRT2 = "http://www.onvif.org/ver20/media/wsdl"
+
+
+def _caps_response(use_media2):
+    media2 = ""
+    if use_media2:
+        media2 = ('<tds:Media2><tds:XAddr>http://127.0.0.1/onvif/media2_service'
+                  '</tds:XAddr></tds:Media2>\n')
+    return (f'<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:tds="{TDS}" '
+            f'xmlns:tt="{TT}">\n'
+            f'  <env:Body>\n'
+            f'    <tds:GetCapabilitiesResponse>\n'
+            f'      <tds:Capabilities>\n'
+            f'        <tds:Device><tds:XAddr>http://127.0.0.1/onvif/'
+            f'device_service</tds:XAddr></tds:Device>\n'
+            f'        <tds:Media><tds:XAddr>http://127.0.0.1/onvif/'
+            f'media_service</tds:XAddr></tds:Media>\n'
+            f'        {media2}'
+            f'        <tds:PTZ><tds:XAddr>http://127.0.0.1/onvif/'
+            f'ptz_service</tds:XAddr></tds:PTZ>\n'
+            f'        <tds:Imaging><tds:XAddr>http://127.0.0.1/onvif/'
+            f'imaging_service</tds:XAddr></tds:Imaging>\n'
+            f'        <tds:Display><tds:XAddr>http://127.0.0.1/onvif/'
+            f'display_service</tds:XAddr></tds:Display>\n'
+            f'      </tds:Capabilities>\n'
+            f'    </tds:GetCapabilitiesResponse>\n'
+            f'  </env:Body>\n'
+            f'</env:Envelope>')
+
+
+def _profiles2_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}" '
+            f'xmlns:tt="{TT}">'
+            "<env:Body><trt2:GetProfiles2Response>"
+            '<trt2:Profiles token="mp1"><tt:Name>main2</tt:Name>'
+            '<tt:VideoSourceConfiguration token="vs0"/>'
+            '<tt:VideoEncoderConfiguration token="enc1"/>'
+            '<tt:PTZConfiguration token="ptz1"/></trt2:Profiles>'
+            '<trt2:Profiles token="mp2"><tt:Name>sub2</tt:Name>'
+            '<tt:VideoSourceConfiguration token="vs0"/>'
+            '<tt:VideoEncoderConfiguration token="enc2"/>'
+            '<tt:PTZConfiguration token="ptz1"/></trt2:Profiles>'
+            "</trt2:GetProfiles2Response></env:Body></env:Envelope>")
+
+
+def _stream_uri2_response(rtsp_host):
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}" '
+            f'xmlns:tt="{TT}"><env:Body><trt2:GetStreamUri2Response>'
+            "<trt2:MediaUri>"
+            f"<tt:Uri>rtsp://{rtsp_host}:554/Streaming/Channels/101</tt:Uri>"
+            "<tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>"
+            "<tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>"
+            "<tt:Timeout>PT30S</tt:Timeout>"
+            "</trt2:MediaUri></trt2:GetStreamUri2Response>"
+            "</env:Body></env:Envelope>")
+
+
+def _encoder2_configs_response(configs):
+    rows = []
+    for token, cfg in configs.items():
+        rows.append(
+            f'<trt2:Configurations token="{token}">'
+            f'<tt:Name>{cfg["name"]}</tt:Name>'
+            f'<tt:Encoding>{cfg["encoding"]}</tt:Encoding>'
+            f'<tt:{cfg["encoding"]}><tt:Resolution><tt:Width>'
+            f'{_num(cfg["width"])}</tt:Width><tt:Height>'
+            f'{_num(cfg["height"])}</tt:Height></tt:Resolution>'
+            f'<tt:RateControl><tt:FrameRateLimit>{_num(cfg["frame_rate"])}'
+            f'</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval>'
+            f'<tt:BitrateLimit>{_num(cfg["bitrate"])}</tt:BitrateLimit>'
+            f'</tt:RateControl></tt:{cfg["encoding"]}>'
+            f'</trt2:Configurations>')
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}" '
+            f'xmlns:tt="{TT}"><env:Body>'
+            "<trt2:GetVideoEncoderConfigurations2Response>"
+            + "".join(rows)
+            + "</trt2:GetVideoEncoderConfigurations2Response></env:Body>"
+            "</env:Envelope>")
+
+
+def _encoder2_options_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}" '
+            f'xmlns:tt="{TT}"><env:Body>'
+            "<trt2:GetVideoEncoderConfigurationOptions2Response>"
+            "<trt2:Options><tt:H264>"
+            "<tt:FrameRateRange><tt:Min>1</tt:Min><tt:Max>30</tt:Max>"
+            "</tt:FrameRateRange>"
+            "<tt:BitrateRange><tt:Min>32</tt:Min><tt:Max>8192</tt:Max>"
+            "</tt:BitrateRange>"
+            "<tt:ResolutionAvailable><tt:Width>1920</tt:Width>"
+            "<tt:Height>1080</tt:Height></tt:ResolutionAvailable>"
+            "<tt:ResolutionAvailable><tt:Width>1280</tt:Width>"
+            "<tt:Height>720</tt:Height></tt:ResolutionAvailable>"
+            "<tt:ResolutionAvailable><tt:Width>640</tt:Width>"
+            "<tt:Height>480</tt:Height></tt:ResolutionAvailable>"
+            "</tt:H264></trt2:Options>"
+            "</trt2:GetVideoEncoderConfigurationOptions2Response>"
+            "</env:Body></env:Envelope>")
+
+
+def _set_encoder2_response():
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<env:Envelope xmlns:env="{ENV}" xmlns:trt2="{TRT2}">'
+            "<env:Body><trt2:SetVideoEncoderConfiguration2Response/>"
+            "</env:Body></env:Envelope>")
+
+
 
 FAULT_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
 <env:Envelope xmlns:env="{ENV}">
@@ -315,10 +448,10 @@ UNAUTHORIZED_RESPONSE = f"""<?xml version="1.0" encoding="UTF-8"?>
   </env:Body>
 </env:Envelope>"""
 
-def _routes(rtsp_host):
+def _routes(rtsp_host, use_media2):
     return {
         "GetDeviceInformation": DEVICE_INFO_RESPONSE,
-        "GetCapabilities": CAPABILITIES_RESPONSE,
+        "GetCapabilities": _caps_response(use_media2),
         "GetProfiles": PROFILES_RESPONSE,
         "GetStreamUri": STREAM_URI_RESPONSE.format(rtsp_host=rtsp_host,
                                                ENV=ENV, TRT=TRT, TT=TT),
@@ -363,12 +496,18 @@ class OnvifMock:
     """
 
     def __init__(self, auth="digest", username="admin", password="pass",
-                 basic_required=False, rtsp_host="127.0.0.1"):
+                 basic_required=False, rtsp_host="127.0.0.1",
+                 use_media2=False, media2_faults=False):
         self.auth = auth            # "digest" | "basic" | "open"
         self.username = username
         self.password = password
         self.basic_required = basic_required  # digest-off when True
         self.rtsp_host = rtsp_host  # host in GetStreamUri replied URIs
+        # M5a Media2 flavor: advertise a Media2 endpoint and answer the
+        # ver20/media operations. `media2_faults` makes GetProfiles2 fault so
+        # tests can assert the classic-Media fallback.
+        self.use_media2 = use_media2
+        self.media2_faults = media2_faults
         self.presets = [{"token": "preset1", "name": "Home"}]
         # Camera-config state (config-panel backend round-trips).
         self.encoder = {
@@ -388,6 +527,9 @@ class OnvifMock:
             {"token": "eth1", "name": "eth1", "enabled": True, "dhcp": False,
              "address": "192.168.1.10", "prefix_length": 24},
         ]
+        # M5b device hostname + NTP state.
+        self.hostname = "mock-cam"
+        self.ntp = {"dhcp": True, "servers": []}
         # M4 §6.8 latency/keep-alive instrumentation (ptz_latency_live).
         self._lock = threading.Lock()
         self.request_count = 0        # total HTTP requests served
@@ -458,6 +600,19 @@ class OnvifMock:
             if prefix:
                 first["prefix_length"] = int(prefix)
             return (200, _set_network_response())
+        if "GetHostname" in body:
+            return (200, _get_hostname_response(self.hostname))
+        if "SetHostname" in body:
+            name = _grab_tag(body, "Name")
+            if name:
+                self.hostname = name
+            return (200, _set_hostname_response())
+        if "SetNTP" in body:
+            dhcp = _grab_tag(body, "FromDHCP")
+            self.ntp["dhcp"] = (dhcp == "true")
+            addr = _grab_tag(body, "Address")
+            self.ntp["servers"] = [addr] if addr else []
+            return (200, _set_ntp_response())
         if "GetOSDs" in body:
             return (200, _osds_response(self.osds))
         if "SetOSD" in body:
@@ -501,6 +656,10 @@ class OnvifMock:
                 with self._lock:
                     self._current_moves -= 1
             return (200, _ptz_empty_response("ContinuousMoveResponse"))
+        if "AbsoluteMove" in body:
+            return (200, _ptz_empty_response("AbsoluteMoveResponse"))
+        if "RelativeMove" in body:
+            return (200, _ptz_empty_response("RelativeMoveResponse"))
         if "Stop" in body:
             with self._lock:
                 self.stop_requests += 1
@@ -522,21 +681,64 @@ class OnvifMock:
             if header != expected:
                 return (401, UNAUTHORIZED_RESPONSE)
 
-        # 2. Stateful PTZ operations --------------------------------------------
+        # 2. Stateful Media2 operations (ver20) -------------------------------
+        # Checked before the classic handlers: every *2 operation name is a
+        # superset of its classic counterpart, so it must win the match.
+        m2 = self._handle_media2(body)
+        if m2 is not None:
+            return m2
+
+        # 3. Stateful PTZ operations -------------------------------------------
         ptz = self._handle_ptz(body)
         if ptz is not None:
             return ptz
 
-        # 2.5 Stateful camera-config operations -------------------------------
+        # 4. Stateful camera-config operations --------------------------------
         cfg = self._handle_config(body)
         if cfg is not None:
             return cfg
 
-        # 3. Stateless route by operation marker -------------------------------
-        for marker, response in _routes(self.rtsp_host).items():
+        # 5. Stateless route by operation marker ------------------------------
+        for marker, response in _routes(self.rtsp_host, self.use_media2).items():
             if marker in body:
                 return (200, response)
         return (500, FAULT_RESPONSE)
+
+    def _handle_media2(self, body):
+        if not self.use_media2:
+            return None
+        if "GetProfiles2" in body:
+            if self.media2_faults:
+                return (500, FAULT_RESPONSE)
+            return (200, _profiles2_response())
+        if "GetStreamUri2" in body:
+            return (200, _stream_uri2_response(self.rtsp_host))
+        if "GetVideoEncoderConfigurations2" in body:
+            return (200, _encoder2_configs_response(self.encoder))
+        if "GetVideoEncoderConfigurationOptions2" in body:
+            return (200, _encoder2_options_response())
+        if "SetVideoEncoderConfiguration2" in body:
+            first = next(iter(self.encoder.values()))
+            name = _grab_tag(body, "Name")
+            encoding = _grab_tag(body, "Encoding")
+            width = _grab_tag(body, "Width")
+            height = _grab_tag(body, "Height")
+            frame_rate = _grab_tag(body, "FrameRateLimit")
+            bitrate = _grab_tag(body, "BitrateLimit")
+            if name:
+                first["name"] = name
+            if encoding:
+                first["encoding"] = encoding
+            if width:
+                first["width"] = int(float(width))
+            if height:
+                first["height"] = int(float(height))
+            if frame_rate:
+                first["frame_rate"] = float(frame_rate)
+            if bitrate:
+                first["bitrate"] = int(float(bitrate))
+            return (200, _set_encoder2_response())
+        return None
 
 
 class OnvifHandler(http.server.BaseHTTPRequestHandler):

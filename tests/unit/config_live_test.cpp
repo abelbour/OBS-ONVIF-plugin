@@ -169,6 +169,17 @@ int main(int argc, char **argv)
 	if (abi->release_osds)
 		abi->release_osds(osds3, ocount3);
 
+	// Hostname + NTP (M5b) -----------------------------------------------
+	char hn[128] = {};
+	CHECK(abi->get_hostname(cam, hn, sizeof hn) == 0);
+	CHECK_EQ(std::string(hn), std::string("mock-cam"));
+	CHECK(abi->set_hostname(cam, "obs-cam") == 0);
+	char hn2[128] = {};
+	CHECK(abi->get_hostname(cam, hn2, sizeof hn2) == 0);
+	CHECK_EQ(std::string(hn2), std::string("obs-cam"));
+	CHECK(abi->set_ntp(cam, 0, "10.0.0.5") == 0);
+	CHECK(abi->set_ntp(cam, 1, "") == 0);
+
 	obs_onvif_abi_test_shutdown();
 	RUN_TESTS("config_live");
 }

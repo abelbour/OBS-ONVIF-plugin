@@ -232,7 +232,7 @@ bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out)
 		if (!profiles.empty()) {
 			out.profile_token = profiles.front().token;
 			const StreamUriResult r =
-				client->GetStreamUri(out.profile_token);
+				client->GetStreamUri(profiles.front());
 			out.stream_uri = r.uri;
 		}
 	} catch (const std::exception &) {

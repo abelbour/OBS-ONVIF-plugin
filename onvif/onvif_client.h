@@ -12,6 +12,7 @@ namespace obs_onvif {
 struct Capabilities {
 	std::string deviceXAddr;
 	std::string mediaXAddr;
+	std::string media2XAddr;
 	std::string ptzXAddr;
 	std::string eventsXAddr;
 	std::string imagingXAddr;
@@ -32,6 +33,10 @@ struct MediaProfile {
 	std::string videoSourceToken;
 	std::string videoEncoderToken;
 	std::string ptzConfigToken;
+	// True when the profile came from the Media2 service. Stream URIs and
+	// encoder configuration for a profile are always taken from the service
+	// that owns its token (PLAN.md §Profile-selection rule).
+	bool media2 = false;
 };
 
 struct StreamUriResult {
@@ -144,8 +149,13 @@ public:
 	DeviceInfo GetDeviceInformation();
 
 	// Media service (http://www.onvif.org/ver10/media/wsdl).
+	// Media2-first when the camera exposes a Media2 endpoint: `GetProfiles`
+	// tries GetProfiles2 and falls back to classic on a fault or empty reply.
+	// Profiles carry `MediaProfile.media2` so the caller routes stream URIs /
+	// encoder config to the owning service.
 	std::vector<MediaProfile> GetProfiles();
 	StreamUriResult GetStreamUri(const std::string &profileToken);
+	StreamUriResult GetStreamUri(const MediaProfile &profile);
 
 	// PTZ service (http://www.onvif.org/ver20/ptz/wsdl).
 	void GotoPreset(const std::string &profileToken,
@@ -170,12 +180,23 @@ public:
 			    AbortHandle *abort);
 	void Stop(const std::string &profileToken);
 	void Stop(const std::string &profileToken, AbortHandle *abort);
+	// Absolute/relative position moves (M5c). Velocities/positions are
+	// normalized -1..1; absolute positions use the absolute position spaces.
+	void AbsoluteMove(const std::string &profileToken, double pan,
+			  double tilt, double zoom);
+	void RelativeMove(const std::string &profileToken, double pan,
+			  double tilt, double zoom);
 
 	// Media: encoder configuration ------------------------------------------
 	std::vector<VideoEncoderConfig> GetVideoEncoderConfigurations();
 	VideoEncoderOptions GetVideoEncoderConfigurationOptions(
 		const std::string &encoderToken);
 	void SetVideoEncoderConfiguration(const VideoEncoderConfig &cfg);
+	// Media2 variants (ver20/media/wsdl). Call these only for Media2 profiles.
+	std::vector<VideoEncoderConfig> GetVideoEncoderConfigurations2();
+	VideoEncoderOptions GetVideoEncoderConfigurationOptions2(
+		const std::string &encoderToken);
+	void SetVideoEncoderConfiguration2(const VideoEncoderConfig &cfg);
 
 	// Imaging service -------------------------------------------------------
 	ImagingSettings GetImagingSettings(const std::string &videoSourceToken);
@@ -186,6 +207,10 @@ public:
 	// Device: network interfaces --------------------------------------------
 	std::vector<NetworkInterfaceInfo> GetNetworkInterfaces();
 	void SetNetworkInterface(const NetworkInterfaceInfo &ni);
+	// Device: hostname + NTP (M5b).
+	std::string GetHostname();
+	void SetHostname(const std::string &name);
+	void SetNTP(const std::vector<std::string> &servers, bool dhcp);
 
 	// Display (ver20): OSD text overlays ------------------------------------
 	std::vector<OSDConfig> GetOSDs(const std::string &videoSourceToken);
@@ -215,10 +240,12 @@ private:
 	unsigned timeoutMs_;
 	std::string deviceService_;
 	std::string mediaService_;
+	std::string media2Service_;
 	std::string ptzService_;
 	std::string imagingService_;
 	std::string displayService_;
 	Capabilities caps_;
+	bool hasMedia2_ = false; // caps advertised a Media2 endpoint
 	std::shared_ptr<SoapPool> pool_; // shared transport (pool + auth cache)
 	SoapClient soap_;
 };

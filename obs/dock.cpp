@@ -821,6 +821,7 @@ struct ConfigSnapshot {
 	obs_cast_imaging_options_t iopt{};
 	std::vector<obs_cast_network_interface_t> netifs;
 	std::vector<obs_cast_osd_config_t> osds;
+	std::string hostname;
 };
 
 class ConfigWidget : public QWidget {
@@ -941,12 +942,22 @@ private:
 		ip_ = new QLineEdit(netForm_);
 		prefix_ = new QSpinBox(netForm_);
 		prefix_->setRange(0, 32);
+		hostname_ = new QLineEdit(netForm_);
+		ntpEnabled_ = new QCheckBox(String("Dock.Config.NtpDhcp"), netForm_);
+		ntpServers_ = new QLineEdit(netForm_);
 
 		auto *form = new QVBoxLayout(netForm_);
 		form->addWidget(dhcp_);
 		form->addLayout(LabeledRow(netForm_, String("Dock.Config.IP"), ip_));
 		form->addLayout(LabeledRow(netForm_, String("Dock.Config.Prefix"),
 					   prefix_));
+		form->addLayout(LabeledRow(netForm_,
+					   String("Dock.Config.Hostname"),
+					   hostname_));
+		form->addWidget(ntpEnabled_);
+		form->addLayout(LabeledRow(netForm_,
+					   String("Dock.Config.NtpServers"),
+					   ntpServers_));
 		form->addStretch();
 
 		netUnsupported_ = new QLabel(String("Dock.Config.Unsupported"));
@@ -954,6 +965,9 @@ private:
 		connect(dhcp_, &QCheckBox::toggled, this, [this](bool on) {
 			ip_->setEnabled(!on);
 			prefix_->setEnabled(!on);
+		});
+		connect(ntpEnabled_, &QCheckBox::toggled, this, [this](bool on) {
+			ntpServers_->setEnabled(!on);
 		});
 
 		auto *tab = new QWidget(this);
@@ -1039,6 +1053,9 @@ private:
 			if (abi->release_osds)
 				abi->release_osds(osds, o);
 		}
+		char hn[128] = {};
+		if (abi->get_hostname && abi->get_hostname(cam, hn, sizeof hn) == 0)
+			snap.hostname = hn;
 		return snap;
 	}
 
@@ -1142,6 +1159,9 @@ private:
 		prefix_->setValue(net_.prefix_length);
 		ip_->setEnabled(net_.dhcp == 0);
 		prefix_->setEnabled(net_.dhcp == 0);
+		hostname_->setText(FromUtf8(snap.hostname));
+		ntpEnabled_->setChecked(true);
+		ntpServers_->setEnabled(false);
 	}
 
 	void PopulateOsd(const ConfigSnapshot &snap)
@@ -1198,13 +1218,17 @@ private:
 		const bool doImage = imageOk_ && img_.present;
 		const bool doNet = netOk_;
 		const bool doOsd = osdOk_;
+		const std::string hostname = hostname_->text().toUtf8().constData();
+		const std::string ntpServers =
+			ntpServers_->text().toUtf8().constData();
+		const int ntpEnabled = ntpEnabled_->isChecked() ? 1 : 0;
 
 		status_->setText(String("Dock.Config.Applying"));
 		apply_->setEnabled(false);
 
 		std::thread(
 			[cameraId, enc, img, net, osd, doStream, doImage, doNet,
-			 doOsd, this]() {
+			 doOsd, hostname, ntpServers, ntpEnabled, this]() {
 				bool ok = true;
 				std::string err;
 				obs_cast_abi_t *abi = obs_onvif_get_abi();
@@ -1223,6 +1247,17 @@ private:
 				    abi->set_network_interface(cam, &net) != 0) {
 					ok = false;
 					err = "network";
+				}
+				if (abi && doNet && abi->set_hostname &&
+				    abi->set_hostname(cam, hostname.c_str()) != 0) {
+					ok = false;
+					err = "hostname";
+				}
+				if (abi && doNet && abi->set_ntp &&
+				    abi->set_ntp(cam, ntpEnabled,
+						 ntpServers.c_str()) != 0) {
+					ok = false;
+					err = "ntp";
 				}
 				if (abi && doOsd) {
 					if (osd.enabled) {
@@ -1278,6 +1313,9 @@ private:
 	QCheckBox *dhcp_;
 	QLineEdit *ip_;
 	QSpinBox *prefix_;
+	QLineEdit *hostname_;
+	QCheckBox *ntpEnabled_;
+	QLineEdit *ntpServers_;
 	QWidget *osdForm_;
 	QLabel *osdUnsupported_;
 	QCheckBox *osdEnabled_;

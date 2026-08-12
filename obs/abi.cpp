@@ -773,6 +773,62 @@ int ADeleteOSD(const char *cam, const char *osd_token)
 	});
 }
 
+// device hostname + NTP -------------------------------------------------------
+int AGetHostname(const char *cam, char *name_out, size_t cap)
+{
+	if (!name_out || !cap)
+		return -1;
+	name_out[0] = '\0';
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		std::string name, err;
+		if (!w.GetHostname(c, name, err))
+			return -3;
+		CopyToken(name_out, cap, name);
+		return 0;
+	});
+}
+
+int ASetHostname(const char *cam, const char *name)
+{
+	if (!name)
+		return -1;
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		std::string err;
+		if (!w.SetHostname(c, name, err))
+			return -3;
+		return 0;
+	});
+}
+
+int ASetNTP(const char *cam, int ntp_enabled, const char *servers_csv)
+{
+	return RunCamera(cam, [&](const Camera &c) {
+		registry::Worker &w = MakeWorker(GetBackend());
+		std::vector<std::string> servers;
+		if (servers_csv && *servers_csv) {
+			std::string rest = servers_csv;
+			for (;;) {
+				const size_t comma = rest.find(',');
+				std::string one =
+					comma == std::string::npos
+						? rest
+						: rest.substr(0, comma);
+				if (!one.empty())
+					servers.push_back(one);
+				if (comma == std::string::npos)
+					break;
+				rest = rest.substr(comma + 1);
+			}
+		}
+		std::string err;
+		if (!w.SetNTP(c, servers, ntp_enabled != 0, err))
+			return -3;
+		return 0;
+	});
+}
+
 extern "C" OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void)
 {
 	static obs_cast_abi_t abi = {
@@ -805,6 +861,9 @@ extern "C" OBS_ONVIF_API obs_cast_abi_t *obs_onvif_get_abi(void)
 		AReleaseOSDs,
 		ASetOSD,
 		ADeleteOSD,
+		AGetHostname,
+		ASetHostname,
+		ASetNTP,
 	};
 	return &abi;
 }
