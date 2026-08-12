@@ -13,6 +13,11 @@ Source URLs.
 > [`PLAN.md`](PLAN.md) (decisions) and
 > [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) (build order + code).
 
+> **Vibe-coded.** This project was developed primarily with AI assistance using
+> **opencode** and the **DeepSeek V4 Flash** model, reviewed and driven on by a
+> human developer. Expect the usual vibes: fast iteration, occasional
+> head-scratching comments, and tests written to keep the hallucinations honest.
+
 ## Features
 
 - **WS-Discovery** (multicast) with a always-on Hello/Bye listener + heartbeat
