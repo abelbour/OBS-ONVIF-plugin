@@ -54,3 +54,8 @@ extern "C" void obs_onvif_abi_test_shutdown(void)
 {
 	obs_onvif::abi::Shutdown();
 }
+
+extern "C" void obs_onvif_abi_test_flush(void)
+{
+	obs_onvif::abi::FlushPtz();
+}

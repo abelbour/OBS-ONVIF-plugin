@@ -20,6 +20,8 @@ import socket
 import socketserver
 import ssl
 import sys
+import threading
+import time
 
 ENV = "http://schemas.xmlsoap.org/soap/envelope/"
 TDS = "http://www.onvif.org/ver10/device/wsdl"
@@ -386,6 +388,23 @@ class OnvifMock:
             {"token": "eth1", "name": "eth1", "enabled": True, "dhcp": False,
              "address": "192.168.1.10", "prefix_length": 24},
         ]
+        # M4 §6.8 latency/keep-alive instrumentation (ptz_latency_live).
+        self._lock = threading.Lock()
+        self.request_count = 0        # total HTTP requests served
+        self.connection_count = 0     # distinct TCP connections accepted
+        self.move_requests = 0        # ContinuousMove requests served
+        self.stop_requests = 0        # Stop requests served
+        self.max_concurrent_moves = 0 # peak in-flight ContinuousMoves
+        self._current_moves = 0
+        self.last_stop_monotonic = None
+        self.move_delay_seconds = 0.0  # delay ContinuousMove responses by this
+
+    def _record_ptz_stats(self, body):
+        with self._lock:
+            self.move_requests += 1
+            self._current_moves += 1
+            self.max_concurrent_moves = max(self.max_concurrent_moves,
+                                            self._current_moves)
 
     def _handle_config(self, body):
         if "GetVideoEncoderConfigurations" in body:
@@ -474,8 +493,18 @@ class OnvifMock:
             self.presets = [p for p in self.presets if p["token"] != token]
             return (200, _ptz_empty_response("DeletePresetResponse"))
         if "ContinuousMove" in body:
+            self._record_ptz_stats(body)
+            try:
+                if self.move_delay_seconds > 0:
+                    time.sleep(self.move_delay_seconds)
+            finally:
+                with self._lock:
+                    self._current_moves -= 1
             return (200, _ptz_empty_response("ContinuousMoveResponse"))
         if "Stop" in body:
+            with self._lock:
+                self.stop_requests += 1
+                self.last_stop_monotonic = time.monotonic()
             return (200, _ptz_empty_response("StopResponse"))
         return None
 
@@ -511,20 +540,37 @@ class OnvifMock:
 
 
 class OnvifHandler(http.server.BaseHTTPRequestHandler):
-    # HTTP/1.0 closes each connection, so the client (WinHTTP) does not hold
-    # the socket open and the handler never sees ConnectionResetError noise.
-    protocol_version = "HTTP/1.0"
+    # HTTP/1.1 keep-alive: the client reuses one connection for consecutive
+    # SOAP calls (M4 §6.8). Content-Length is always sent so the handler knows
+    # when a response ends and can stay open for the next request.
+    protocol_version = "HTTP/1.1"
+
+    def setup(self):
+        super().setup()
+        mock = self.server.mock
+        with mock._lock:
+            mock.connection_count += 1
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(n).decode("utf-8", errors="replace")
-        status, xml_body = self.server.mock.handle(body, self.headers)
+        mock = self.server.mock
+        status, xml_body = mock.handle(body, self.headers)
+        with mock._lock:
+            mock.request_count += 1
         data = xml_body.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "text/xml; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "text/xml; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            if self.headers.get("Connection", "").lower() == "close":
+                self.close_connection = True
+            self.end_headers()
+            self.wfile.write(data)
+            self.wfile.flush()
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            # The client may abort an in-flight request (immediate stop).
+            self.close_connection = True
 
     def log_message(self, *args):
         pass

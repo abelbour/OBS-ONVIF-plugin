@@ -20,6 +20,7 @@ if(BUILD_TESTING)
 		unit/store_test.cpp
 		unit/apply_test.cpp
 		unit/registry_test.cpp
+		unit/ptz_controller_test.cpp
 	)
 
 	foreach(_test IN LISTS REGISTRY_TESTS)
@@ -131,6 +132,21 @@ if(BUILD_TESTING)
 				${CMAKE_CURRENT_SOURCE_DIR}/run_aclink_test.py
 				$<TARGET_FILE:aclink>
 				${CMAKE_BINARY_DIR}
+		)
+	endif()
+
+	# Live PTZ latency/keep-alive flow against the mock (M4 §6.8): the driver
+	# asserts one-request cached moves, connection reuse, a prompt immediate
+	# stop, and queue depth <= 1.
+	if(Python3_FOUND)
+		add_executable(ptz_latency_live_test unit/ptz_latency_live_test.cpp
+			       ../obs/abi_test.cpp)
+		target_link_libraries(ptz_latency_live_test PRIVATE obs_abi)
+		add_test(
+			NAME ptz_latency_live
+			COMMAND ${Python3_EXECUTABLE}
+				${CMAKE_CURRENT_SOURCE_DIR}/run_ptz_latency_test.py
+				$<TARGET_FILE:ptz_latency_live_test>
 		)
 	endif()
 endif()

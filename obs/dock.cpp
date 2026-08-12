@@ -749,12 +749,6 @@ public:
 		RefreshCameras();
 	}
 
-	~PtzWidget() override
-	{
-		if (held_)
-			held_->store(false);
-	}
-
 private:
 	QPushButton *PadButton(const char *key, double pan, double tilt,
 			       double zoom)
@@ -787,49 +781,30 @@ private:
 		PopulateCameraCombo(cameras_, /*onlineOnly=*/true);
 	}
 
+	/* M4 §6.8: press → Move, release → Stop. The ABI enqueues on the
+	 * PtzController (single in-flight, coalesced, min interval), so these
+	 * are non-blocking and safe on the UI thread. */
 	void StartAxis(double pan, double tilt, double zoom)
 	{
 		const QString cam = CurrentCameraId();
 		if (cam.isEmpty())
 			return;
-		if (held_)
-			held_->store(false); // stop any prior hold
-		auto held = std::make_shared<std::atomic<bool>>(true);
-		held_ = held;
-		const std::string cameraId = cam.toStdString();
-		std::thread([held, cameraId, pan, tilt, zoom]() {
-			obs_cast_abi_t *abi = obs_onvif_get_abi();
-			if (!abi)
-				return;
-			/* Re-issue the velocity move while the button is held;
-			 * the worker gives each SOAP call a short timeout. */
-			while (held->load()) {
-				abi->move(cameraId.c_str(), pan, tilt, zoom);
-				std::this_thread::sleep_for(
-					std::chrono::milliseconds(300));
-			}
-		}).detach();
+		obs_cast_abi_t *abi = Abi();
+		if (abi)
+			abi->move(cam.toStdString().c_str(), pan, tilt, zoom);
 	}
 
 	void StopAxis()
 	{
-		if (held_) {
-			held_->store(false);
-			held_.reset();
-		}
 		const QString cam = CurrentCameraId();
 		if (cam.isEmpty())
 			return;
-		const std::string cameraId = cam.toStdString();
-		std::thread([cameraId]() {
-			obs_cast_abi_t *abi = obs_onvif_get_abi();
-			if (abi)
-				abi->stop(cameraId.c_str());
-		}).detach();
+		obs_cast_abi_t *abi = Abi();
+		if (abi)
+			abi->stop(cam.toStdString().c_str());
 	}
 
 	QComboBox *cameras_;
-	std::shared_ptr<std::atomic<bool>> held_;
 };
 
 // -- Config tab --------------------------------------------------------------

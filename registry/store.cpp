@@ -212,6 +212,13 @@ bool Store::LoadAppConfig(AppConfig &cfg) const
 	cfg.restore_settings_on_reconnect =
 		j.value("restore_settings_on_reconnect",
 			cfg.restore_settings_on_reconnect);
+	cfg.soap_keepalive = j.value("soap_keepalive", cfg.soap_keepalive);
+	cfg.ptz_auth_cache = j.value("ptz_auth_cache", cfg.ptz_auth_cache);
+	cfg.ptz_move_timeout_s =
+		j.value("ptz_move_timeout_s", cfg.ptz_move_timeout_s);
+	cfg.ptz_stop_mode = j.value("ptz_stop_mode", cfg.ptz_stop_mode);
+	cfg.ptz_min_interval_ms =
+		j.value("ptz_min_interval_ms", cfg.ptz_min_interval_ms);
 	return true;
 }
 
@@ -228,7 +235,12 @@ bool Store::SaveAppConfig(const AppConfig &cfg) const
 	       {"default_stream",
 		cfg.default_stream == StreamChoice::High ? "high" : "low"},
 	       {"restore_settings_on_reconnect",
-		cfg.restore_settings_on_reconnect}};
+		cfg.restore_settings_on_reconnect},
+	       {"soap_keepalive", cfg.soap_keepalive},
+	       {"ptz_auth_cache", cfg.ptz_auth_cache},
+	       {"ptz_move_timeout_s", cfg.ptz_move_timeout_s},
+	       {"ptz_stop_mode", cfg.ptz_stop_mode},
+	       {"ptz_min_interval_ms", cfg.ptz_min_interval_ms}};
 	return SaveJson(DirOf(config_dir_) / "config.json", j);
 }
 

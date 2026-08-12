@@ -86,15 +86,18 @@ struct MoveKey {
 void OnMoveHotkey(void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 {
 	const auto *key = static_cast<const MoveKey *>(data);
-	FireAsync([key, pressed](obs_cast_abi_t *abi) {
-		std::string cam;
-		if (!FirstOnlineCameraId(cam))
-			return;
-		if (pressed)
-			abi->move(cam.c_str(), key->pan, key->tilt, key->zoom);
-		else
-			abi->stop(cam.c_str());
-	});
+	/* M4 §6.8: the ABI enqueues on the PtzController (non-blocking), so
+	 * this can run directly on the OBS thread. */
+	obs_cast_abi_t *abi = obs_onvif_get_abi();
+	if (!abi)
+		return;
+	std::string cam;
+	if (!FirstOnlineCameraId(cam))
+		return;
+	if (pressed)
+		abi->move(cam.c_str(), key->pan, key->tilt, key->zoom);
+	else
+		abi->stop(cam.c_str());
 }
 
 void RegisterMoveKey(const char *name, const char *description, double pan,

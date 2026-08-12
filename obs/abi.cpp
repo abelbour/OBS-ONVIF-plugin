@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "ptz_controller.h"
 #include "store.h"
 
 namespace obs_onvif::abi {
@@ -31,6 +32,7 @@ struct Backend {
 	CredsProvider creds;
 	std::string collection;
 	std::shared_ptr<registry::Worker> worker;
+	std::shared_ptr<registry::PtzController> ptz;
 };
 
 Backend &GetBackend()
@@ -88,6 +90,72 @@ void CopyStr(char *out, size_t cap, const std::string &s)
 	CopyToken(out, cap, s);
 }
 
+// Runs on the PTZ controller thread. Resolves the camera (by id or name),
+// then dispatches through the shared Worker (profile/service cache + shared
+// transport pool) with the controller's AbortHandle wired to the transport so
+// an immediate Stop cancels the in-flight move.
+bool PtzExecutor(const std::string &cameraId, const registry::PtzCommand &cmd,
+		 obs_onvif::AbortHandle &abort, std::string &err)
+{
+	std::shared_ptr<registry::Worker> w;
+	registry::Camera cam;
+	bool found = false;
+	{
+		std::lock_guard<std::mutex> lock(Guard());
+		Backend &b = GetBackend();
+		if (!b.cams || !b.worker) {
+			err = "ABI not initialized";
+			return false;
+		}
+		w = b.worker;
+		const std::vector<Camera> table = b.cams();
+		for (const auto &c : table) {
+			if (c.id == cameraId || c.name == cameraId) {
+				cam = c;
+				found = true;
+				break;
+			}
+		}
+	}
+	if (!found) {
+		err = "camera not found";
+		return false;
+	}
+	if (!cam.online) {
+		err = "camera offline";
+		return false;
+	}
+	if (cmd.stop)
+		return w->StopAbortable(cam, abort, err);
+	return w->MoveAbortable(cam, cmd.pan, cmd.tilt, cmd.zoom,
+			       cmd.timeoutSeconds, abort, err);
+}
+
+void LoadConfigIntoBackend(Backend &b)
+{
+	AppConfig cfg;
+	b.store.LoadAppConfig(cfg);
+	if (b.worker) {
+		b.worker->SetTimeout((unsigned)(cfg.soap_timeout_s * 1000));
+		b.worker->SetPtzTransport(cfg.soap_keepalive,
+					  cfg.ptz_auth_cache);
+	}
+	if (b.ptz) {
+		PtzSettings s;
+		s.keepalive = cfg.soap_keepalive;
+		s.authCache = cfg.ptz_auth_cache;
+		s.moveTimeoutSeconds =
+			cfg.ptz_move_timeout_s > 0
+				? (unsigned)cfg.ptz_move_timeout_s
+				: 0;
+		s.stopImmediate = cfg.ptz_stop_mode != "queued";
+		s.minIntervalMs = cfg.ptz_min_interval_ms > 0
+					  ? (unsigned)cfg.ptz_min_interval_ms
+					  : 75;
+		b.ptz->SetSettings(s);
+	}
+}
+
 } // namespace
 
 void Initialize(const std::string &configDir, CameraProvider cams,
@@ -98,12 +166,25 @@ void Initialize(const std::string &configDir, CameraProvider cams,
 	b.store = Store(configDir);
 	b.cams = std::move(cams);
 	b.creds = std::move(creds);
+	b.worker = std::make_shared<registry::Worker>(b.creds);
+	b.ptz = std::make_shared<registry::PtzController>(PtzExecutor);
+	LoadConfigIntoBackend(b);
 }
 
 void Shutdown()
 {
+	std::shared_ptr<registry::PtzController> ptz;
+	{
+		std::lock_guard<std::mutex> lock(Guard());
+		ptz = std::move(GetBackend().ptz);
+	}
+	// Join the controller thread outside Guard() (PtzExecutor takes it).
+	if (ptz)
+		ptz->Shutdown();
+
 	std::lock_guard<std::mutex> lock(Guard());
 	Backend &b = GetBackend();
+	b.worker.reset();
 	b.cams = CameraProvider();
 	b.creds = CredsProvider();
 	b.collection.clear();
@@ -113,6 +194,42 @@ void SetCollection(const std::string &collectionUuid)
 {
 	std::lock_guard<std::mutex> lock(Guard());
 	GetBackend().collection = collectionUuid;
+}
+
+void ApplyAppConfig(const registry::AppConfig &cfg)
+{
+	std::lock_guard<std::mutex> lock(Guard());
+	Backend &b = GetBackend();
+	if (b.worker) {
+		b.worker->SetTimeout((unsigned)(cfg.soap_timeout_s * 1000));
+		b.worker->SetPtzTransport(cfg.soap_keepalive,
+					  cfg.ptz_auth_cache);
+	}
+	if (b.ptz) {
+		PtzSettings s;
+		s.keepalive = cfg.soap_keepalive;
+		s.authCache = cfg.ptz_auth_cache;
+		s.moveTimeoutSeconds =
+			cfg.ptz_move_timeout_s > 0
+				? (unsigned)cfg.ptz_move_timeout_s
+				: 0;
+		s.stopImmediate = cfg.ptz_stop_mode != "queued";
+		s.minIntervalMs = cfg.ptz_min_interval_ms > 0
+					  ? (unsigned)cfg.ptz_min_interval_ms
+					  : 75;
+		b.ptz->SetSettings(s);
+	}
+}
+
+void FlushPtz()
+{
+	std::shared_ptr<registry::PtzController> ptz;
+	{
+		std::lock_guard<std::mutex> lock(Guard());
+		ptz = GetBackend().ptz;
+	}
+	if (ptz)
+		ptz->WaitIdle();
 }
 
 } // namespace obs_onvif::abi
@@ -170,13 +287,16 @@ void AReleaseCameraList(obs_cast_camera_info_t *out)
 }
 
 // PTZ ----------------------------------------------------------------------
+// M4 §6.8: move/stop enqueue on the PtzController (single in-flight, latest-wins
+// coalescing, Stop purge+priority, min interval). Unknown/offline cameras are
+// rejected synchronously; SOAP-level failures surface asynchronously.
 int AMove(const char *cam, double pan, double tilt, double zoom)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker &w = MakeWorker(GetBackend());
-		std::string err;
-		if (!w.Move(c, pan, tilt, zoom, err))
+		Backend &b = GetBackend();
+		if (!b.ptz)
 			return -3;
+		b.ptz->Move(c.id, pan, tilt, zoom);
 		return 0;
 	});
 }
@@ -184,10 +304,10 @@ int AMove(const char *cam, double pan, double tilt, double zoom)
 int AStop(const char *cam)
 {
 	return RunCamera(cam, [&](const Camera &c) {
-		registry::Worker &w = MakeWorker(GetBackend());
-		std::string err;
-		if (!w.Stop(c, err))
+		Backend &b = GetBackend();
+		if (!b.ptz)
 			return -3;
+		b.ptz->Stop(c.id);
 		return 0;
 	});
 }

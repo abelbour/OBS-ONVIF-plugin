@@ -7,6 +7,8 @@
 //   General   — default stream quality, apply-prompt timeout, discovery
 //               interval, SOAP timeout
 //   Discovery — continuous Hello/Bye listener toggle, probe timeout
+//   PTZ       — transport + motor-control knobs (keep-alive, auth cache,
+//               move timeout, stop mode, min interval)
 //   Log       — tail of the newest OBS session log + path hints
 //   About     — name/version/config-directory info
 #include "settings_dialog.h"
@@ -31,6 +33,7 @@
 #include <fstream>
 #include <string>
 
+#include "abi.h"
 #include "obs_apply.h"
 #include "store.h"
 
@@ -112,6 +115,7 @@ public:
 		tabs_ = new QTabWidget(this);
 		tabs_->addTab(BuildGeneralTab(), String("Settings.TabGeneral"));
 		tabs_->addTab(BuildDiscoveryTab(), String("Settings.TabDiscovery"));
+		tabs_->addTab(BuildPtzTab(), String("Settings.TabPtz"));
 		tabs_->addTab(BuildLogTab(), String("Settings.TabLog"));
 		tabs_->addTab(BuildAboutTab(), String("Settings.TabAbout"));
 
@@ -181,6 +185,41 @@ private:
 		return tab;
 	}
 
+	QWidget *BuildPtzTab()
+	{
+		keepalive_ = new QCheckBox(String("Settings.PtzKeepalive"), this);
+		authCache_ = new QCheckBox(String("Settings.PtzAuthCache"), this);
+
+		moveTimeout_ = new QSpinBox(this);
+		moveTimeout_->setRange(0, 300);
+		moveTimeout_->setSuffix(" s");
+		moveTimeout_->setSpecialValueText(String("Settings.PtzUntilStop"));
+
+		stopMode_ = new QComboBox(this);
+		stopMode_->addItem(String("Settings.PtzStopImmediate"), QString("immediate"));
+		stopMode_->addItem(String("Settings.PtzStopQueued"), QString("queued"));
+
+		minInterval_ = new QSpinBox(this);
+		minInterval_->setRange(0, 1000);
+		minInterval_->setSuffix(" ms");
+
+		auto *form = new QFormLayout();
+		form->addRow(keepalive_);
+		form->addRow(authCache_);
+		form->addRow(String("Settings.PtzMoveTimeout"), moveTimeout_);
+		form->addRow(String("Settings.PtzStopMode"), stopMode_);
+		form->addRow(String("Settings.PtzMinInterval"), minInterval_);
+		auto *hint = new QLabel(String("Settings.PtzHint"), this);
+		hint->setWordWrap(true);
+
+		auto *tab = new QWidget(this);
+		auto *layout = new QVBoxLayout(tab);
+		layout->addLayout(form);
+		layout->addWidget(hint);
+		layout->addStretch();
+		return tab;
+	}
+
 	QWidget *BuildLogTab()
 	{
 		logView_ = new QPlainTextEdit(this);
@@ -236,6 +275,11 @@ private:
 		soapTimeout_->setValue(cfg.soap_timeout_s);
 		helloEnabled_->setChecked(cfg.hello_listener_enabled);
 		probeTimeout_->setValue(cfg.discovery_probe_timeout_s);
+		keepalive_->setChecked(cfg.soap_keepalive);
+		authCache_->setChecked(cfg.ptz_auth_cache);
+		moveTimeout_->setValue(cfg.ptz_move_timeout_s);
+		stopMode_->setCurrentIndex(cfg.ptz_stop_mode == "queued" ? 1 : 0);
+		minInterval_->setValue(cfg.ptz_min_interval_ms);
 	}
 
 	void WriteSettings()
@@ -251,9 +295,19 @@ private:
 		cfg.soap_timeout_s = soapTimeout_->value();
 		cfg.hello_listener_enabled = helloEnabled_->isChecked();
 		cfg.discovery_probe_timeout_s = probeTimeout_->value();
-		status_->setText(store.SaveAppConfig(cfg)
-					 ? String("Settings.Saved")
-					 : String("Settings.SaveFailed"));
+		cfg.soap_keepalive = keepalive_->isChecked();
+		cfg.ptz_auth_cache = authCache_->isChecked();
+		cfg.ptz_move_timeout_s = moveTimeout_->value();
+		cfg.ptz_stop_mode =
+			stopMode_->currentData().toString() == "queued"
+				? "queued"
+				: "immediate";
+		cfg.ptz_min_interval_ms = minInterval_->value();
+		const bool saved = store.SaveAppConfig(cfg);
+		if (saved)
+			obs_onvif::abi::ApplyAppConfig(cfg);
+		status_->setText(saved ? String("Settings.Saved")
+				       : String("Settings.SaveFailed"));
 	}
 
 	QTabWidget *tabs_;
@@ -264,6 +318,11 @@ private:
 	QSpinBox *soapTimeout_;
 	QCheckBox *helloEnabled_;
 	QSpinBox *probeTimeout_;
+	QCheckBox *keepalive_;
+	QCheckBox *authCache_;
+	QSpinBox *moveTimeout_;
+	QComboBox *stopMode_;
+	QSpinBox *minInterval_;
 	QPlainTextEdit *logView_;
 };
 

@@ -3,11 +3,13 @@
 #include <exception>
 #include <utility>
 
-#include "onvif_client.h"
-
 namespace obs_onvif::registry {
 
 namespace {
+
+// Profile/service cache TTL. Fresh entries answer FirstProfileCached with zero
+// network; entries older than this are re-resolved on the next hot-path use.
+constexpr std::chrono::seconds kProfileCacheTtl(60);
 
 // Runs `fn` against a fresh client for `cam`; converts exceptions into a
 // visible error string. Returns an error message when the operation threw.
@@ -25,11 +27,14 @@ bool RunWithClient(obs_onvif::OnvifClient &client, Fn &&fn,
 }
 
 // Resolves the camera's first MediaProfile (video-source + encoder tokens).
+// GetCapabilities is skipped when the client already carries capabilities
+// (injected from the profile/service cache), saving one round trip.
 bool ResolveProfile(obs_onvif::OnvifClient &client,
 		    obs_onvif::MediaProfile &out, std::string &err)
 {
 	try {
-		client.GetCapabilities();
+		if (client.capabilities().deviceXAddr.empty())
+			client.GetCapabilities();
 		const auto profiles = client.GetProfiles();
 		if (profiles.empty()) {
 			err = "camera exposes no media profiles";
@@ -60,65 +65,190 @@ void Worker::SetAllowBasicFallback(bool allow)
 	allowBasicFallback_ = allow;
 }
 
-obs_onvif::OnvifClient Worker::BuildClient(const Camera &cam) const
+void Worker::SetPtzTransport(bool keepalive, bool authCache)
+{
+	{
+		std::lock_guard<std::mutex> lock(cacheMu_);
+		keepalive_ = keepalive;
+		authCache_ = authCache;
+		for (const auto &kv : pools_) {
+			kv.second->SetKeepalive(keepalive);
+			kv.second->SetAuthCache(authCache);
+		}
+	}
+}
+
+std::shared_ptr<obs_onvif::SoapPool> Worker::PoolFor(
+	const std::string &cameraId) const
+{
+	std::lock_guard<std::mutex> lock(cacheMu_);
+	auto it = pools_.find(cameraId);
+	if (it != pools_.end())
+		return it->second;
+	auto pool = std::make_shared<obs_onvif::SoapPool>();
+	pool->SetKeepalive(keepalive_);
+	pool->SetAuthCache(authCache_);
+	pools_[cameraId] = pool;
+	return pool;
+}
+
+obs_onvif::OnvifClient Worker::BuildClient(
+	const Camera &cam, const obs_onvif::Capabilities *caps,
+	const std::shared_ptr<obs_onvif::SoapPool> &pool) const
 {
 	CameraCreds creds;
 	if (creds_)
 		creds = creds_(cam.id);
 	return obs_onvif::OnvifClient(cam.xaddr, creds.username, creds.password,
-				     allowBasicFallback_,
-				     /*validateCert=*/false, timeoutMs_);
+				     allowBasicFallback_, /*validateCert=*/false,
+				     timeoutMs_, caps, pool);
 }
 
-bool Worker::FirstProfileToken(obs_onvif::OnvifClient &client,
-			       std::string &token, std::string &err)
+bool Worker::ClientFor(const Camera &cam, obs_onvif::OnvifClient &out,
+		       std::string &err) const
 {
-	obs_onvif::MediaProfile profile;
-	if (!ResolveProfile(client, profile, err))
-		return false;
-	token = profile.token;
+	const std::shared_ptr<obs_onvif::SoapPool> pool = PoolFor(cam.id);
+	obs_onvif::Capabilities caps;
+	bool haveCaps = false;
+	{
+		std::lock_guard<std::mutex> lock(cacheMu_);
+		const auto it = profileCache_.find(cam.id);
+		if (it != profileCache_.end() &&
+		    (std::chrono::steady_clock::now() - it->second.at) <
+			    kProfileCacheTtl) {
+			caps = it->second.caps;
+			haveCaps = true;
+		}
+	}
+	out = BuildClient(cam, haveCaps ? &caps : nullptr, pool);
+	(void)err;
 	return true;
+}
+
+void Worker::StoreCache(const std::string &cameraId,
+			const obs_onvif::Capabilities &caps,
+			const obs_onvif::MediaProfile &profile) const
+{
+	std::lock_guard<std::mutex> lock(cacheMu_);
+	profileCache_[cameraId] = {caps, profile,
+				   std::chrono::steady_clock::now()};
+}
+
+bool Worker::FirstProfileCached(const Camera &cam,
+				obs_onvif::OnvifClient &client,
+				obs_onvif::MediaProfile &out,
+				std::string &err)
+{
+	// Fast path: a fresh cache entry answers with zero network.
+	CacheEntry cached;
+	bool haveCached = false;
+	{
+		std::lock_guard<std::mutex> lock(cacheMu_);
+		const auto it = profileCache_.find(cam.id);
+		if (it != profileCache_.end() &&
+		    (std::chrono::steady_clock::now() - it->second.at) <
+			    kProfileCacheTtl) {
+			cached = it->second;
+			haveCached = true;
+		}
+	}
+	if (haveCached) {
+		if (client.capabilities().deviceXAddr.empty())
+			client = BuildClient(cam, &cached.caps,
+					     PoolFor(cam.id));
+		out = cached.profile;
+		return true;
+	}
+
+	// Miss: resolve with the client as built (cached caps skip the
+	// GetCapabilities round trip); on a SOAP error re-resolve fully.
+	if (client.capabilities().deviceXAddr.empty())
+		client = BuildClient(cam, nullptr, PoolFor(cam.id));
+	if (ResolveProfile(client, out, err)) {
+		StoreCache(cam.id, client.capabilities(), out);
+		return true;
+	}
+	if (!client.capabilities().deviceXAddr.empty()) {
+		const auto pool = PoolFor(cam.id);
+		{
+			std::lock_guard<std::mutex> lock(cacheMu_);
+			profileCache_.erase(cam.id);
+		}
+		client = BuildClient(cam, nullptr, pool);
+		if (ResolveProfile(client, out, err)) {
+			StoreCache(cam.id, client.capabilities(), out);
+			return true;
+		}
+	}
+	return false;
 }
 
 bool Worker::FirstProfile(const Camera &cam, obs_onvif::MediaProfile &out,
 			  std::string &err)
 {
-	auto client = BuildClient(cam);
-	return ResolveProfile(client, out, err);
+	obs_onvif::OnvifClient client;
+	return FirstProfileCached(cam, client, out, err);
 }
 
 bool Worker::Move(const Camera &cam, double pan, double tilt, double zoom,
 		  std::string &err)
 {
-	auto client = BuildClient(cam);
-	std::string profile;
-	if (!FirstProfileToken(client, profile, err))
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
 		return false;
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
-		c.ContinuousMove(profile, pan, tilt, zoom, /*timeoutSeconds=*/0.5);
+		c.ContinuousMove(profile.token, pan, tilt, zoom,
+				 /*timeoutSeconds=*/0.0);
 	}, err);
 }
 
 bool Worker::Stop(const Camera &cam, std::string &err)
 {
-	auto client = BuildClient(cam);
-	std::string profile;
-	if (!FirstProfileToken(client, profile, err))
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
 		return false;
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
-		c.Stop(profile);
+		c.Stop(profile.token);
+	}, err);
+}
+
+bool Worker::MoveAbortable(const Camera &cam, double pan, double tilt,
+			   double zoom, unsigned timeoutSeconds,
+			   obs_onvif::AbortHandle &abort, std::string &err)
+{
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.ContinuousMove(profile.token, pan, tilt, zoom,
+				 (double)timeoutSeconds, &abort);
+	}, err);
+}
+
+bool Worker::StopAbortable(const Camera &cam, obs_onvif::AbortHandle &abort,
+			   std::string &err)
+{
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
+		return false;
+	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
+		c.Stop(profile.token, &abort);
 	}, err);
 }
 
 bool Worker::GotoPreset(const Camera &cam, const std::string &presetToken,
 			std::string &err)
 {
-	auto client = BuildClient(cam);
-	std::string profile;
-	if (!FirstProfileToken(client, profile, err))
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
 		return false;
 	if (!RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
-		    c.GotoPreset(profile, presetToken);
+		    c.GotoPreset(profile.token, presetToken);
 	    }, err))
 		return false;
 
@@ -131,12 +261,12 @@ bool Worker::GotoPreset(const Camera &cam, const std::string &presetToken,
 bool Worker::SavePreset(const Camera &cam, const std::string &name,
 			std::string &tokenOut, std::string &err)
 {
-	auto client = BuildClient(cam);
-	std::string profile;
-	if (!FirstProfileToken(client, profile, err))
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
 		return false;
 	if (!RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
-		    tokenOut = c.SetPreset(profile, name);
+		    tokenOut = c.SetPreset(profile.token, name);
 	    }, err))
 		return false;
 
@@ -149,12 +279,12 @@ bool Worker::SavePreset(const Camera &cam, const std::string &name,
 bool Worker::ListPresets(const Camera &cam, std::vector<PresetInfo> &out,
 			 std::string &err)
 {
-	auto client = BuildClient(cam);
-	std::string profile;
-	if (!FirstProfileToken(client, profile, err))
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
 		return false;
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
-		const auto presets = c.GetPresets(profile);
+		const auto presets = c.GetPresets(profile.token);
 		out.clear();
 		out.reserve(presets.size());
 		for (const auto &p : presets)
@@ -165,24 +295,24 @@ bool Worker::ListPresets(const Camera &cam, std::vector<PresetInfo> &out,
 bool Worker::RenamePreset(const Camera &cam, const std::string &presetToken,
 			  const std::string &newName, std::string &err)
 {
-	auto client = BuildClient(cam);
-	std::string profile;
-	if (!FirstProfileToken(client, profile, err))
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
 		return false;
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
-		c.RenamePreset(profile, presetToken, newName);
+		c.RenamePreset(profile.token, presetToken, newName);
 	}, err);
 }
 
 bool Worker::DeletePreset(const Camera &cam, const std::string &presetToken,
 			  std::string &err)
 {
-	auto client = BuildClient(cam);
-	std::string profile;
-	if (!FirstProfileToken(client, profile, err))
+	obs_onvif::OnvifClient client;
+	obs_onvif::MediaProfile profile;
+	if (!FirstProfileCached(cam, client, profile, err))
 		return false;
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
-		c.DeletePreset(profile, presetToken);
+		c.DeletePreset(profile.token, presetToken);
 	}, err);
 }
 
@@ -201,7 +331,9 @@ bool Worker::EncoderConfig(const Camera &cam,
 			   obs_onvif::VideoEncoderConfig &out,
 			   std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	obs_onvif::MediaProfile profile;
 	if (!ResolveProfile(client, profile, err))
 		return false;
@@ -225,7 +357,9 @@ bool Worker::EncoderOptions(const Camera &cam,
 			    obs_onvif::VideoEncoderOptions &out,
 			    std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	obs_onvif::MediaProfile profile;
 	if (!ResolveProfile(client, profile, err))
 		return false;
@@ -239,7 +373,9 @@ bool Worker::SetEncoderConfig(const Camera &cam,
 			      const obs_onvif::VideoEncoderConfig &cfg,
 			      std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	obs_onvif::MediaProfile profile;
 	if (!ResolveProfile(client, profile, err))
 		return false;
@@ -254,7 +390,9 @@ bool Worker::ImagingSettings(const Camera &cam,
 			     obs_onvif::ImagingSettings &out,
 			     std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	obs_onvif::MediaProfile profile;
 	if (!ResolveProfile(client, profile, err))
 		return false;
@@ -267,7 +405,9 @@ bool Worker::ImagingOptions(const Camera &cam,
 			    obs_onvif::ImagingOptions &out,
 			    std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	obs_onvif::MediaProfile profile;
 	if (!ResolveProfile(client, profile, err))
 		return false;
@@ -280,7 +420,9 @@ bool Worker::SetImagingSettings(const Camera &cam,
 				const obs_onvif::ImagingSettings &s,
 				std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	obs_onvif::MediaProfile profile;
 	if (!ResolveProfile(client, profile, err))
 		return false;
@@ -293,7 +435,9 @@ bool Worker::NetworkInterfaces(const Camera &cam,
 			       std::vector<obs_onvif::NetworkInterfaceInfo> &out,
 			       std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
 		out = c.GetNetworkInterfaces();
 	}, err);
@@ -303,7 +447,9 @@ bool Worker::SetNetworkInterface(const Camera &cam,
 				 const obs_onvif::NetworkInterfaceInfo &ni,
 				 std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	return RunWithClient(client, [&](obs_onvif::OnvifClient &c) {
 		c.SetNetworkInterface(ni);
 	}, err);
@@ -312,7 +458,9 @@ bool Worker::SetNetworkInterface(const Camera &cam,
 bool Worker::OSDs(const Camera &cam,
 		  std::vector<obs_onvif::OSDConfig> &out, std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	obs_onvif::MediaProfile profile;
 	if (!ResolveProfile(client, profile, err))
 		return false;
@@ -324,7 +472,9 @@ bool Worker::OSDs(const Camera &cam,
 bool Worker::SetOSD(const Camera &cam, const obs_onvif::OSDConfig &cfg,
 		    std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	obs_onvif::MediaProfile profile;
 	if (!ResolveProfile(client, profile, err))
 		return false; // also populates the display service URL
@@ -339,7 +489,9 @@ bool Worker::SetOSD(const Camera &cam, const obs_onvif::OSDConfig &cfg,
 bool Worker::DeleteOSD(const Camera &cam, const std::string &osdToken,
 		       std::string &err)
 {
-	auto client = BuildClient(cam);
+	obs_onvif::OnvifClient client;
+	if (!ClientFor(cam, client, err))
+		return false;
 	obs_onvif::MediaProfile profile;
 	if (!ResolveProfile(client, profile, err))
 		return false; // also populates the display service URL

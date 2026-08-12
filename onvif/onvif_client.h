@@ -1,8 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "soap_client.h"
 
 namespace obs_onvif {
 
@@ -113,14 +116,28 @@ struct OSDConfig {
 // authority (scheme://host:port) rewritten to the base URL's so calls reach
 // the same endpoint the client was configured with.
 //
+// A shared SoapPool may be supplied (M4 §6.8): the connection pool + keep-alive
+// reuse and the per-service auth-mode cache live in it, so hot PTZ paths avoid
+// a connection handshake and a 401 round-trip on every command. Pre-resolved
+// `caps` skip the GetCapabilities round trip entirely.
+//
 // Transport failures and SOAP faults surface as std::runtime_error.
 class OnvifClient {
 public:
+	// Blank client for use as an out-parameter that gets replaced by the
+	// worker's client factory before any operation.
+	OnvifClient();
 	OnvifClient(std::string baseUrl, std::string username,
 		    std::string password);
 	OnvifClient(std::string baseUrl, std::string username,
 		    std::string password, bool allowBasicFallback,
-		    bool validateCert = false, unsigned timeoutMs = 3000);
+		    bool validateCert = false, unsigned timeoutMs = 3000,
+		    const Capabilities *caps = nullptr,
+		    std::shared_ptr<SoapPool> pool = nullptr);
+
+	// Capabilities captured by the last GetCapabilities (or injected via
+	// the constructor). Empty XAddrs mean they were never resolved.
+	const Capabilities &capabilities() const { return caps_; }
 
 	// Device service (http://www.onvif.org/ver10/device/wsdl).
 	Capabilities GetCapabilities();
@@ -143,10 +160,16 @@ public:
 			  const std::string &newName);
 	void DeletePreset(const std::string &profileToken,
 			  const std::string &presetToken);
-	// Velocity move (normalized -1..1 per axis) for ~timeoutSeconds.
+	// Velocity move (normalized -1..1 per axis). `timeoutSeconds <= 0`
+	// omits the ContinuousMove Timeout (the camera moves until Stop);
+	// a positive value bounds the move and the caller re-fires to hold it.
 	void ContinuousMove(const std::string &profileToken, double pan,
 			    double tilt, double zoom, double timeoutSeconds);
+	void ContinuousMove(const std::string &profileToken, double pan,
+			    double tilt, double zoom, double timeoutSeconds,
+			    AbortHandle *abort);
 	void Stop(const std::string &profileToken);
+	void Stop(const std::string &profileToken, AbortHandle *abort);
 
 	// Media: encoder configuration ------------------------------------------
 	std::vector<VideoEncoderConfig> GetVideoEncoderConfigurations();
@@ -171,12 +194,14 @@ public:
 
 private:
 	// Sends one operation; throws std::runtime_error on transport failure or
-	// SOAP fault. Returns the raw response body.
+	// SOAP fault. Returns the raw response body. `abort`, when non-null,
+	// is passed to the transport so an immediate stop can cancel in flight.
 	std::string PostOperation(const std::string &serviceUrl,
 				  const std::string &soapAction,
 				  const char *opPrefix,
 				  const char *wsdlNs,
-				  const std::string &body);
+				  const std::string &body,
+				  AbortHandle *abort = nullptr);
 
 	std::string ServiceFor(const std::string &primary,
 			       const std::string &capsXAddr);
@@ -194,6 +219,8 @@ private:
 	std::string imagingService_;
 	std::string displayService_;
 	Capabilities caps_;
+	std::shared_ptr<SoapPool> pool_; // shared transport (pool + auth cache)
+	SoapClient soap_;
 };
 
 } // namespace obs_onvif

@@ -56,6 +56,12 @@ struct AppConfig {
 	ApplyPolicyChoice apply_policy = ApplyPolicyChoice::Ask;
 	StreamChoice default_stream = StreamChoice::High;
 	bool restore_settings_on_reconnect = false;
+	// M4 §6.8 — PTZ transport/motor-control knobs (Settings → PTZ tab).
+	bool soap_keepalive = true;      // reuse WinHTTP connections across SOAP calls
+	bool ptz_auth_cache = true;      // remember negotiated auth mode per camera
+	int ptz_move_timeout_s = 0;      // 0 = ContinuousMove without Timeout (until Stop)
+	std::string ptz_stop_mode = "immediate"; // "immediate" (abort) | "queued"
+	int ptz_min_interval_ms = 75;    // hard floor between movement dispatches
 };
 
 // Per-scene-collection state (store/collection_<uuid>.json).

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "camera.h"
+#include "ptz_controller.h"
 #include "worker.h"
 
 namespace obs_onvif::abi {
@@ -30,5 +31,13 @@ void Shutdown();
 // plugin resolves it from OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED; tests
 // set it directly.
 void SetCollection(const std::string &collectionUuid);
+
+// M4 §6.8: re-apply AppConfig to the transport/controller (worker timeouts,
+// keep-alive, auth cache, PTZ motor-control knobs). Called at Initialize and
+// when Settings → PTZ saves.
+void ApplyAppConfig(const registry::AppConfig &cfg);
+
+// Blocks until the PTZ controller queue is drained (test-only flush).
+void FlushPtz();
 
 } // namespace obs_onvif::abi

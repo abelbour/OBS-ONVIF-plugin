@@ -25,6 +25,9 @@ typedef struct obs_onvif_test_config_s {
 OBS_ONVIF_API void obs_onvif_abi_test_configure(
 	const obs_onvif_test_config_t *cfg);
 OBS_ONVIF_API void obs_onvif_abi_test_shutdown(void);
+/* Blocks until the PTZ controller queue is drained (deterministic async
+ * move/stop sequencing in live tests). */
+OBS_ONVIF_API void obs_onvif_abi_test_flush(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

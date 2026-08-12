@@ -1,5 +1,6 @@
 add_library(registry_lib STATIC
 	apply.cpp
+	ptz_controller.cpp
 	registry.cpp
 	store.cpp
 	worker.cpp

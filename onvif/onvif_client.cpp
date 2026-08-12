@@ -56,15 +56,6 @@ const char *Attr(const tinyxml2::XMLElement *el, const char *name)
 	return value ? value : "";
 }
 
-// Serializes a normalized PTZ velocity/coordinate with fixed precision so the
-// result is locale-independent ("-0.250", not "-0,250").
-std::string FormatCoord(double v)
-{
-	char buf[32];
-	std::snprintf(buf, sizeof(buf), "%.3f", v);
-	return buf;
-}
-
 // Minimal XML-escape for user-supplied text inside envelope bodies.
 std::string EscapeXml(const std::string &s)
 {
@@ -127,17 +118,27 @@ const char *kVelocityZoomSpace =
 
 } // namespace
 
+OnvifClient::OnvifClient()
+	: OnvifClient("", "", "", /*allowBasicFallback=*/true,
+		      /*validateCert=*/false, /*timeoutMs=*/3000, nullptr,
+		      nullptr)
+{
+}
+
 OnvifClient::OnvifClient(std::string baseUrl, std::string username,
 			 std::string password)
 	: OnvifClient(std::move(baseUrl), std::move(username),
 		      std::move(password), /*allowBasicFallback=*/true,
-		      /*validateCert=*/false, /*timeoutMs=*/3000)
+		      /*validateCert=*/false, /*timeoutMs=*/3000, nullptr,
+		      nullptr)
 {
 }
 
 OnvifClient::OnvifClient(std::string baseUrl, std::string username,
 			 std::string password, bool allowBasicFallback,
-			 bool validateCert, unsigned timeoutMs)
+			 bool validateCert, unsigned timeoutMs,
+			 const Capabilities *caps,
+			 std::shared_ptr<SoapPool> pool)
 	: baseUrl_(std::move(baseUrl)),
 	  authority_(UrlAuthority(baseUrl_)),
 	  username_(std::move(username)),
@@ -145,8 +146,19 @@ OnvifClient::OnvifClient(std::string baseUrl, std::string username,
 	  allowBasicFallback_(allowBasicFallback),
 	  validateCert_(validateCert),
 	  timeoutMs_(timeoutMs),
-	  deviceService_(baseUrl_)
+	  deviceService_(baseUrl_),
+	  pool_(std::move(pool)),
+	  soap_(pool_)
 {
+	if (caps) {
+		// Pre-resolved capabilities: adopt the service XAddrs so a
+		// fresh client skips the GetCapabilities round trip.
+		caps_ = *caps;
+		mediaService_ = ServiceFor(deviceService_, caps->mediaXAddr);
+		ptzService_ = ServiceFor(deviceService_, caps->ptzXAddr);
+		imagingService_ = ServiceFor(deviceService_, caps->imagingXAddr);
+		displayService_ = ServiceFor(deviceService_, caps->displayXAddr);
+	}
 }
 
 std::string OnvifClient::ServiceFor(const std::string &primary,
@@ -161,7 +173,8 @@ std::string OnvifClient::PostOperation(const std::string &serviceUrl,
 				       const std::string &soapAction,
 				       const char *opPrefix,
 				       const char *wsdlNs,
-				       const std::string &body)
+				       const std::string &body,
+				       AbortHandle *abort)
 {
 	std::vector<std::pair<std::string, std::string>> ns = {
 		{opPrefix, wsdlNs}, {"tt", kTtNs}};
@@ -174,19 +187,47 @@ std::string OnvifClient::PostOperation(const std::string &serviceUrl,
 	digest.validateCert = validateCert_;
 	digest.timeoutMs = timeoutMs_;
 
+	SoapRequest basic;
+	basic.url = serviceUrl;
+	basic.body = xml::Envelope("", body, ns);
+	basic.soapAction = soapAction;
+	basic.basicUser = username_;
+	basic.basicPass = password_;
+	basic.validateCert = validateCert_;
+	basic.timeoutMs = timeoutMs_;
+
 	SoapResult out;
-	if (allowBasicFallback_) {
-		SoapRequest basic;
-		basic.url = serviceUrl;
-		basic.body = xml::Envelope("", body, ns);
-		basic.soapAction = soapAction;
-		basic.basicUser = username_;
-		basic.basicPass = password_;
-		basic.validateCert = validateCert_;
-		basic.timeoutMs = timeoutMs_;
-		SoapClient().SendWithAuthFallback(digest, basic, out);
+	const bool hasPool = pool_ != nullptr;
+	if (!allowBasicFallback_) {
+		soap_.Send(digest, out, abort);
 	} else {
-		SoapClient().Send(digest, out);
+		const SoapPool::AuthMode cached =
+			hasPool ? pool_->AuthFor(serviceUrl)
+				: SoapPool::AuthMode::Unknown;
+		if (cached == SoapPool::AuthMode::Basic) {
+			// Accepted mode already known: no 401 round-trip.
+			soap_.Send(basic, out, abort);
+		} else if (cached == SoapPool::AuthMode::Wsse) {
+			soap_.Send(digest, out, abort);
+		} else {
+			// First contact: digest first, Basic on rejection.
+			soap_.Send(digest, out, abort);
+			if (out.transportOk && out.httpStatus != 401 &&
+			    !out.fault.present) {
+				if (hasPool)
+					pool_->RememberAuth(
+						serviceUrl,
+						SoapPool::AuthMode::Wsse);
+			} else if (!(abort && abort->Signaled())) {
+				SoapResult second;
+				soap_.Send(basic, second, abort);
+				out = second;
+				if (hasPool && out.transportOk)
+					pool_->RememberAuth(
+						serviceUrl,
+						SoapPool::AuthMode::Basic);
+			}
+		}
 	}
 
 	if (!out.transportOk)
@@ -341,14 +382,10 @@ void OnvifClient::GotoPreset(const std::string &profileToken,
 				    presetToken +
 				    "</trt:PresetToken></trt:GotoPreset>";
 
-	const std::string body = PostOperation(
-		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/GotoPreset",
-		"trt", kPtzNs, reqBody);
-
-	tinyxml2::XMLDocument doc;
-	if (!xml::Parse(body, doc))
-		throw std::runtime_error("GotoPreset: malformed response");
-	(void)doc;
+	// Void op: the envelope body carries nothing this caller needs.
+	(void)PostOperation(ptzService_,
+			    "http://www.onvif.org/ver20/ptz/wsdl/GotoPreset",
+			    "trt", kPtzNs, reqBody);
 }
 
 std::string OnvifClient::SetPreset(const std::string &profileToken,
@@ -415,14 +452,9 @@ void OnvifClient::RenamePreset(const std::string &profileToken,
 		"</trt:PresetToken><trt:NewName>" + EscapeXml(newName) +
 		"</trt:NewName></trt:RenamePreset>";
 
-	const std::string body = PostOperation(
-		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/RenamePreset",
-		"trt", kPtzNs, reqBody);
-
-	tinyxml2::XMLDocument doc;
-	if (!xml::Parse(body, doc))
-		throw std::runtime_error("RenamePreset: malformed response");
-	(void)doc;
+	(void)PostOperation(ptzService_,
+			    "http://www.onvif.org/ver20/ptz/wsdl/RenamePreset",
+			    "trt", kPtzNs, reqBody);
 }
 
 void OnvifClient::DeletePreset(const std::string &profileToken,
@@ -433,56 +465,70 @@ void OnvifClient::DeletePreset(const std::string &profileToken,
 		"</trt:ProfileToken><trt:PresetToken>" + presetToken +
 		"</trt:PresetToken></trt:DeletePreset>";
 
-	const std::string body = PostOperation(
-		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/DeletePreset",
-		"trt", kPtzNs, reqBody);
-
-	tinyxml2::XMLDocument doc;
-	if (!xml::Parse(body, doc))
-		throw std::runtime_error("DeletePreset: malformed response");
-	(void)doc;
+	(void)PostOperation(ptzService_,
+			    "http://www.onvif.org/ver20/ptz/wsdl/DeletePreset",
+			    "trt", kPtzNs, reqBody);
 }
 
 void OnvifClient::ContinuousMove(const std::string &profileToken, double pan,
 				 double tilt, double zoom,
 				 double timeoutSeconds)
 {
-	const std::string reqBody =
-		"<trt:ContinuousMove><trt:ProfileToken>" + profileToken +
-		"</trt:ProfileToken><trt:Velocity><tt:PanTilt x=\"" +
-		FormatCoord(pan) + "\" y=\"" + FormatCoord(tilt) +
-		"\" space=\"" + kVelocityPanTiltSpace + "\"/><tt:Zoom x=\"" +
-		FormatCoord(zoom) + "\" space=\"" + kVelocityZoomSpace +
-		"\"/></trt:Velocity><trt:Timeout>PT0H0M" +
-		FormatCoord(timeoutSeconds) +
-		"S</trt:Timeout></trt:ContinuousMove>";
+	ContinuousMove(profileToken, pan, tilt, zoom, timeoutSeconds, nullptr);
+}
 
-	const std::string body = PostOperation(
-		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/ContinuousMove",
-		"trt", kPtzNs, reqBody);
+void OnvifClient::ContinuousMove(const std::string &profileToken, double pan,
+				 double tilt, double zoom,
+				 double timeoutSeconds, AbortHandle *abort)
+{
+	// Fixed-buffer velocity injection (M4 §6.8): the body is built with
+	// snprintf so the hot path never pays for string formatting churn.
+	char velocity[192];
+	std::snprintf(velocity, sizeof velocity,
+		      "<trt:Velocity><tt:PanTilt x=\"%.3f\" y=\"%.3f\" "
+		      "space=\"%s\"/><tt:Zoom x=\"%.3f\" space=\"%s\"/>"
+		      "</trt:Velocity>",
+		      pan, tilt, kVelocityPanTiltSpace, zoom,
+		      kVelocityZoomSpace);
+	std::string reqBody = "<trt:ContinuousMove><trt:ProfileToken>" +
+			      profileToken + "</trt:ProfileToken>" +
+			      velocity;
+	if (timeoutSeconds > 0.0) {
+		const int totalSec = (int)timeoutSeconds;
+		const int hours = totalSec / 3600;
+		const int minutes = (totalSec % 3600) / 60;
+		const double secs = timeoutSeconds -
+				    (double)(hours * 3600 + minutes * 60);
+		char timeout[64];
+		std::snprintf(timeout, sizeof timeout,
+			      "<trt:Timeout>PT%dH%dM%.3fS</trt:Timeout>",
+			      hours, minutes, secs);
+		reqBody += timeout;
+	}
+	reqBody += "</trt:ContinuousMove>";
 
-	tinyxml2::XMLDocument doc;
-	if (!xml::Parse(body, doc))
-		throw std::runtime_error(
-			"ContinuousMove: malformed response");
-	(void)doc;
+	// Void op: the empty response body is not parsed.
+	(void)PostOperation(ptzService_,
+			    "http://www.onvif.org/ver20/ptz/wsdl/ContinuousMove",
+			    "trt", kPtzNs, reqBody, abort);
 }
 
 void OnvifClient::Stop(const std::string &profileToken)
+{
+	Stop(profileToken, nullptr);
+}
+
+void OnvifClient::Stop(const std::string &profileToken, AbortHandle *abort)
 {
 	const std::string reqBody =
 		"<trt:Stop><trt:ProfileToken>" + profileToken +
 		"</trt:ProfileToken><trt:PanTilt>true</trt:PanTilt>"
 		"<trt:Zoom>true</trt:Zoom></trt:Stop>";
 
-	const std::string body = PostOperation(
-		ptzService_, "http://www.onvif.org/ver20/ptz/wsdl/Stop", "trt",
-		kPtzNs, reqBody);
-
-	tinyxml2::XMLDocument doc;
-	if (!xml::Parse(body, doc))
-		throw std::runtime_error("Stop: malformed response");
-	(void)doc;
+	// Void op: the empty response body is not parsed.
+	(void)PostOperation(ptzService_,
+			    "http://www.onvif.org/ver20/ptz/wsdl/Stop", "trt",
+			    kPtzNs, reqBody, abort);
 }
 
 // -- Encoder configuration ---------------------------------------------------
