@@ -35,6 +35,7 @@ static void TestCamerasRoundTrip()
 	a.xaddr = "http://10.0.0.1/onvif/device_service";
 	a.scopeMac = "aa:bb:cc:dd:ee:ff";
 	a.online = true;
+	a.manual = true;
 	a.lastSeen = 1234;
 	a.lastKnownRTSP["profile1"] = "rtsp://10.0.0.1:554/s1";
 	a.username = "admin";
@@ -49,6 +50,7 @@ static void TestCamerasRoundTrip()
 	CHECK_EQ(cams[0].xaddr, a.xaddr);
 	CHECK_EQ(cams[0].scopeMac, a.scopeMac);
 	CHECK_EQ(cams[0].online, true);
+	CHECK_EQ(cams[0].manual, true);
 	CHECK_EQ(cams[0].lastSeen, uint64_t(1234));
 	CHECK_EQ(cams[0].lastKnownRTSP.at("profile1"),
 		 std::string("rtsp://10.0.0.1:554/s1"));

@@ -82,4 +82,12 @@ bool AddManual(const std::string &xaddr, const std::string &username,
 // that id exists.
 bool RemoveManual(const std::string &cameraId, std::string &err);
 
+// Diagnostic counters (OBS-free; surfaced by the dock's Diagnostics tab).
+uint64_t ProbesSent();
+uint64_t DatagramsParsed();
+unsigned LastParsedDevices();
+
+// Compact, human-readable summary of the discovery loop state.
+std::string Diagnostics();
+
 } // namespace obs_onvif::discovery

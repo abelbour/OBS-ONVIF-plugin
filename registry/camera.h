@@ -26,6 +26,10 @@ struct Camera {
 	std::map<std::string, std::string> lastKnownRTSP; // profileToken -> rtsp url
 	bool online = false;
 	uint64_t lastSeen = 0;                       // wall-clock ms
+	// User added this camera by IP. It stays "online" (selectable for config /
+	// PTZ) regardless of multicast liveness, because its reachability was
+	// verified with a direct unicast call at add time.
+	bool manual = false;
 };
 
 // A camera attached to one OBS Media Source, namespaced per scene collection.

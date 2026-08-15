@@ -123,6 +123,25 @@ bool &HelloEnabled()
 	return e;
 }
 
+// Diagnostic counters surfaced by the dock's Diagnostics tab.
+std::atomic<uint64_t> &ProbeCounter()
+{
+	static std::atomic<uint64_t> v(0);
+	return v;
+}
+
+std::atomic<uint64_t> &DatagramCounter()
+{
+	static std::atomic<uint64_t> v(0);
+	return v;
+}
+
+std::atomic<unsigned> &LastParseCount()
+{
+	static std::atomic<unsigned> v(0);
+	return v;
+}
+
 uint64_t NowMs()
 {
 	return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -151,7 +170,9 @@ void SeedFromStore()
 		return;
 	std::lock_guard<std::mutex> lock(StateMu());
 	for (auto &c : cams) {
-		c.online = false;
+		// Manual cameras were verified by a direct call at add time and
+		// don't depend on multicast liveness: keep them selectable.
+		c.online = c.manual;
 		Live()[c.id] = std::move(c);
 	}
 }
@@ -178,6 +199,7 @@ struct ContactInfo {
 	std::string profile_token;
 	std::string stream_uri;
 	std::string credentials;
+	bool manual = false; // user added by IP: becomes a permanent camera
 };
 
 // Full resolution of a ProbeMatch (or an unknown/new-address Hello): identity
@@ -361,6 +383,7 @@ bool ApplyContact(const ContactInfo &ci)
 			cam.name = ci.display_name;
 			cam.xaddr = ci.xaddr;
 			cam.scopeMac = ci.scope_mac;
+			cam.manual = ci.manual;
 			cam.online = true;
 			cam.lastSeen = now;
 			if (!ci.stream_uri.empty())
@@ -370,6 +393,8 @@ bool ApplyContact(const ContactInfo &ci)
 			isNew = true;
 		} else {
 			registry::Camera &cam = it->second;
+			if (ci.manual)
+				cam.manual = true;
 			/* An XAddr change only counts as a move when we also have
 			 * a fresh stream URI to rewrite to (a device that moved
 			 * but stalls on media just updates its address). */
@@ -415,7 +440,7 @@ void SweepStale()
 	const uint64_t cutoff = NowMs() - (uint64_t)HeartbeatS() * 3000;
 	std::lock_guard<std::mutex> lock(StateMu());
 	for (auto &kv : Live()) {
-		if (kv.second.lastSeen < cutoff)
+		if (!kv.second.manual && kv.second.lastSeen < cutoff)
 			kv.second.online = false;
 	}
 }
@@ -439,6 +464,7 @@ void LoopBody()
 	LogLine("UDP socket open OK on 239.255.255.250:3702");
 
 	const long sent0 = SendProbeAll(sock, "urn:uuid:obs-onvif-start");
+	ProbeCounter()++;
 	LogLine("startup Probe sent (" + std::to_string(sent0) + " bytes)");
 
 	uint64_t nextHeartbeat = NowMs() + (uint64_t)HeartbeatS() * 1000;
@@ -467,6 +493,7 @@ void LoopBody()
 			const std::string id = "urn:uuid:obs-onvif-retry" +
 					       std::to_string(retries++);
 			const long s = SendProbeAll(sock, id);
+			ProbeCounter()++;
 			LogLine("retry Probe #" + std::to_string(retries) +
 				" sent (" + std::to_string(s) + " bytes)");
 			nextRetry = NowMs() + 3000;
@@ -474,11 +501,13 @@ void LoopBody()
 		if (ScanRequested().exchange(false)) {
 			const long s =
 				SendProbeAll(sock, "urn:uuid:obs-onvif-scan");
+			ProbeCounter()++;
 			LogLine("manual Scan Probe sent (" + std::to_string(s) +
 				" bytes)");
 		}
 		if (NowMs() >= nextHeartbeat) {
 			SendProbeAll(sock, "urn:uuid:obs-onvif-heartbeat");
+			ProbeCounter()++;
 			LogLine("heartbeat Probe sent");
 			SweepStale();
 			nextHeartbeat =
@@ -558,6 +587,7 @@ void ProbeOnce(const std::string &host, uint16_t port,
 	if (sock == -1)
 		return;
 	if (SendUdp(sock, BuildProbe(messageId), host, port) > 0) {
+		ProbeCounter()++;
 		std::string reply;
 		if (RecvUdp(sock, reply, /*timeoutMs=*/5000) > 0)
 			HandleDiscoveryDatagram(reply);
@@ -572,8 +602,10 @@ void HandleDiscoveryDatagram(const std::string &xml)
 		LogLine("datagram parsed 0 devices (echo or unrecognized)");
 		return;
 	}
+	DatagramCounter()++;
 	LogLine("datagram parsed " + std::to_string(devs.size()) +
 		" device(s)");
+	LastParseCount() = (unsigned)devs.size();
 	for (const auto &dev : devs) {
 		switch (dev.type) {
 		case DiscoveryMsgType::Bye:
@@ -609,6 +641,7 @@ bool AddManual(const std::string &xaddr, const std::string &username,
 		LogLine("AddManual(" + xaddr + ") failed: " + err);
 		return false;
 	}
+	ci.manual = true;
 
 	// Persist the camera's credentials in the Credential Vault so later
 	// operations resolve them by fingerprint.
@@ -635,6 +668,36 @@ bool RemoveManual(const std::string &cameraId, std::string &err)
 	}
 	err = "camera '" + cameraId + "' not found";
 	return false;
+}
+
+uint64_t ProbesSent()
+{
+	return ProbeCounter().load();
+}
+
+uint64_t DatagramsParsed()
+{
+	return DatagramCounter().load();
+}
+
+unsigned LastParsedDevices()
+{
+	return LastParseCount();
+}
+
+std::string Diagnostics()
+{
+	std::string out = "loop " + std::string(Running() ? "running" : "stopped");
+	out += "\nheartbeat every " + std::to_string(HeartbeatS()) + " s";
+	out += "\nhello/byy listener: " +
+	       std::string(HelloEnabled() ? "on" : "off");
+	out += "\nprobes sent: " + std::to_string(ProbesSent());
+	out += "\ndatagrams parsed: " + std::to_string(DatagramsParsed());
+	out += "\nlast parse device count: " +
+	       std::to_string(LastParsedDevices());
+	out += "\ncameras in live table: " +
+	       std::to_string(Snapshot().size());
+	return out;
 }
 
 } // namespace obs_onvif::discovery

@@ -61,6 +61,7 @@ json CameraToJson(const Camera &c)
 		    {"xaddr", c.xaddr},
 		    {"scope_mac", c.scopeMac},
 		    {"online", c.online},
+		    {"manual", c.manual},
 		    {"last_seen", c.lastSeen},
 		    {"last_known_rtsp", rtsp}};
 }
@@ -73,6 +74,7 @@ Camera CameraFromJson(const json &j)
 	c.xaddr = j.value("xaddr", std::string());
 	c.scopeMac = j.value("scope_mac", std::string());
 	c.online = j.value("online", false);
+	c.manual = j.value("manual", false);
 	c.lastSeen = j.value("last_seen", uint64_t(0));
 	if (j.contains("last_known_rtsp") && j["last_known_rtsp"].is_object()) {
 		for (auto it = j["last_known_rtsp"].begin();

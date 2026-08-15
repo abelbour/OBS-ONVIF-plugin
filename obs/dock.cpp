@@ -29,6 +29,7 @@
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QObject>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -43,6 +44,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -1431,6 +1433,81 @@ private:
 	bool osdOk_ = false;
 };
 
+// -- Diagnostics tab ---------------------------------------------------------
+
+class DiagnosticsWidget : public QWidget {
+public:
+	explicit DiagnosticsWidget(QWidget *parent = nullptr)
+		: QWidget(parent)
+	{
+		text_ = new QPlainTextEdit(this);
+		text_->setReadOnly(true);
+		text_->setLineWrapMode(QPlainTextEdit::NoWrap);
+
+		auto *refresh = new QPushButton(String("Settings.Refresh"), this);
+		connect(refresh, &QPushButton::clicked, this,
+			&DiagnosticsWidget::Refresh);
+
+		auto *settings = new QPushButton(String("Dock.Settings"), this);
+		connect(settings, &QPushButton::clicked, this,
+			[]() { ShowSettingsDialog(); });
+
+		auto *scan = new QPushButton(String("Dock.Diag.Scan"), this);
+		connect(scan, &QPushButton::clicked, this, [this]() {
+			obs_onvif::discovery::RequestScan();
+			Refresh();
+		});
+
+		auto *buttons = new QHBoxLayout();
+		buttons->addWidget(refresh);
+		buttons->addWidget(scan);
+		buttons->addWidget(settings);
+		buttons->addStretch();
+
+		auto *layout = new QVBoxLayout(this);
+		layout->addWidget(text_);
+		layout->addLayout(buttons);
+
+		Refresh();
+	}
+
+private:
+	void Refresh()
+	{
+		std::string out = PLUGIN_NAME;
+		out += " " + std::string(PLUGIN_VERSION);
+		out += " (ABI ";
+		obs_cast_abi_t *abi = Abi();
+		out += abi ? std::to_string(abi->api_version) : "unavailable";
+		out += ")\nconfig: " + ConfigDir();
+		const char *appdata = std::getenv("APPDATA");
+		out += "\nlogs: " +
+		       std::string(appdata ? appdata : "") +
+		       "\\obs-studio\\logs\n";
+		out += "--- discovery ---\n" +
+		       obs_onvif::discovery::Diagnostics();
+
+		if (abi) {
+			obs_cast_camera_info_t *arr = nullptr;
+			int n = 0;
+			int online = 0;
+			if (abi->get_camera_list(&arr, &n) == 0 && arr) {
+				for (int i = 0; i < n; ++i)
+					if (arr[i].online)
+						++online;
+				if (abi->release_camera_list)
+					abi->release_camera_list(arr);
+			}
+			out += "\n--- cameras (ABI) ---\n";
+			out += std::to_string(online) + " online / " +
+			       std::to_string(n) + " total";
+		}
+		text_->setPlainText(FromUtf8(out));
+	}
+
+	QPlainTextEdit *text_;
+};
+
 // -- Dock lifecycle ----------------------------------------------------------
 
 bool g_dock_loaded = false;
@@ -1462,6 +1539,7 @@ void LoadDock()
 	tabs->addTab(new PtzWidget(tabs), String("Dock.TabPtz"));
 	tabs->addTab(new ConfigWidget(tabs), String("Dock.TabConfig"));
 	tabs->addTab(new PolicyWidget(tabs), String("Dock.TabPolicy"));
+	tabs->addTab(new DiagnosticsWidget(tabs), String("Dock.TabDiagnostics"));
 
 	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("Dock.Title"),
 					 tabs)) {
