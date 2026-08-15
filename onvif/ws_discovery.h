@@ -10,10 +10,12 @@ constexpr uint16_t kDiscoveryPort = 3702;
 constexpr const char *kDiscoveryGroup = "239.255.255.250";
 
 // One enumerable multicast-capable IPv4 interface. `addr` is in network byte
-// order; `ifindex` is 0 when only the legacy fallback supplied it.
+// order; `ifindex` is 0 when only the legacy fallback supplied it; `prefix` is
+// the interface's on-link prefix length (0 = unknown, treated as /24).
 struct UdpIface {
 	uint32_t addr = 0;
 	unsigned long ifindex = 0;
+	unsigned prefix = 0;
 	std::string name;
 };
 
@@ -67,6 +69,14 @@ int CloseUdpSocket(intptr_t sock);
 // even though the packet is echoed back locally. Falls back to the default
 // interface when none are enumerated. Returns total bytes sent.
 long SendProbeAll(intptr_t sock, const std::string &messageId);
+
+// Elevation-free discovery fallback: Windows Firewall tracks UDP "solicited"
+// traffic by the exact reversed 4-tuple, so a multicast Probe's unicast reply
+// (from the camera's IP, not the group address) is dropped without an inbound
+// rule. Sending the Probe *directly* to each host IP:3702 makes the reply the
+// tracked response and it is allowed. Sweeps every interface's on-link subnet
+// (capped to ~254 hosts), skipping /22 and bigger. Returns total bytes sent.
+long SendProbeDirected(intptr_t sock, const std::string &messageId);
 
 // Human-readable list of the multicast interfaces the socket code joins and
 // sends probes on (for the Diagnostics tab). Example:

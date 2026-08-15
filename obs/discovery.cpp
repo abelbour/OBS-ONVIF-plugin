@@ -536,6 +536,15 @@ void LoopBody()
 	ProbeCounter()++;
 	LogLine("startup Probe sent (" + std::to_string(sent0) + " bytes)");
 
+	// Elevation-free fallback: multicast replies to a non-elevated OBS are
+	// often dropped by Windows Firewall; a unicast subnet sweep's replies
+	// are tracked as solicited traffic and always arrive.
+	const long sentD =
+		SendProbeDirected(sock, "urn:uuid:obs-onvif-start-directed");
+	ProbeCounter()++;
+	LogLine("startup directed Probe sweep sent (" + std::to_string(sentD) +
+		" bytes)");
+
 	uint64_t nextHeartbeat = NowMs() + (uint64_t)HeartbeatS() * 1000;
 	uint64_t nextRetry = NowMs() + 3000;
 	uint64_t retries = 0;
@@ -570,9 +579,12 @@ void LoopBody()
 		if (ScanRequested().exchange(false)) {
 			const long s =
 				SendProbeAll(sock, "urn:uuid:obs-onvif-scan");
-			ProbeCounter()++;
-			LogLine("manual Scan Probe sent (" + std::to_string(s) +
-				" bytes)");
+			const long d = SendProbeDirected(
+				sock, "urn:uuid:obs-onvif-scan-directed");
+			ProbeCounter() += (s > 0 ? 1 : 0) + (d > 0 ? 1 : 0);
+			LogLine("manual Scan Probe sent (multicast " +
+				std::to_string(s) + ", directed " +
+				std::to_string(d) + " bytes)");
 		}
 		if (NowMs() >= nextHeartbeat) {
 			SendProbeAll(sock, "urn:uuid:obs-onvif-heartbeat");

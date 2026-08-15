@@ -104,6 +104,9 @@ std::vector<UdpIface> MulticastInterfaces()
 				UdpIface i;
 				i.addr = sin->sin_addr.s_addr;
 				i.ifindex = a->IfIndex;
+				i.prefix = u->OnLinkPrefixLength;
+				if (i.prefix == 0 || i.prefix > 32)
+					i.prefix = 24;
 				if (a->FriendlyName) {
 					const int wlen = WideCharToMultiByte(
 						CP_UTF8, 0, a->FriendlyName, -1,
@@ -142,6 +145,7 @@ std::vector<UdpIface> MulticastInterfaces()
 			    !(flags & IFF_LOOPBACK)) {
 				UdpIface i;
 				i.addr = addr->sin_addr.s_addr;
+				i.prefix = 24; // legacy path reports no netmask
 				i.name = "legacy";
 				out.push_back(std::move(i));
 			}
@@ -415,6 +419,49 @@ long SendProbeAll(intptr_t sock, const std::string &messageId)
 					      kDiscoveryPort);
 			if (s > 0)
 				total += s;
+		}
+	}
+	return total;
+}
+
+// Elevation-free discovery: sweep each interface's on-link subnet with a
+// unicast WS-Discovery Probe. Replies to these are the tracked "solicited"
+// traffic Windows Firewall allows automatically, so multicast-addressed
+// solicitation (whose unicast reply is dropped without an inbound rule) is not
+// required to find cameras.
+long SendProbeDirected(intptr_t sock, const std::string &messageId)
+{
+	const std::string v11 = BuildProbeV11(messageId);
+	const std::string any = BuildProbeAny(messageId);
+	long total = 0;
+	for (const UdpIface &iface : MulticastInterfaces()) {
+		unsigned prefix = iface.prefix;
+		if (prefix == 0 || prefix > 30)
+			continue; // unknown or too big (e.g. /16) to sweep
+		if (prefix < 22)
+			continue; // >1022 hosts: skip supernets
+		const uint32_t mask_h =
+			prefix == 0 ? 0 : (0xffffffffUL << (32 - prefix));
+		const uint32_t addr_h = ntohl(iface.addr);
+		const uint32_t base = addr_h & mask_h;
+		const uint32_t maxHost = ~mask_h; // host bits count
+		uint32_t hosts = maxHost - 1;     // minus broadcast
+		if (hosts > 254)
+			hosts = 254;
+		for (uint32_t h = 1; h <= hosts; ++h) {
+			const uint32_t ip = base + h;
+			if (ip == addr_h)
+				continue;
+			in_addr a{};
+			a.s_addr = htonl(ip);
+			char host[INET_ADDRSTRLEN];
+			inet_ntop(AF_INET, &a, host, sizeof host);
+			for (const std::string &p : {v11, any}) {
+				const long s = SendUdp(sock, p, host,
+							kDiscoveryPort);
+				if (s > 0)
+					total += s;
+			}
 		}
 	}
 	return total;
