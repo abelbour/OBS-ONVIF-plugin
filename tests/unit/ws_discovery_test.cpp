@@ -108,7 +108,7 @@ static void TestBuildProbe()
 	CHECK(probe != nullptr);
 	const std::string types = ChildText(probe, "Types");
 	CHECK(types.find("dn:NetworkVideoTransmitter") != std::string::npos);
-	CHECK(types.find("d:Device") != std::string::npos);
+	CHECK(types.find("d:Device") == std::string::npos); // ODM-compatible probe
 }
 
 static void TestParseProbeMatches()

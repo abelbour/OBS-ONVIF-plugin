@@ -99,7 +99,7 @@ std::string BuildProbe(const std::string &messageId)
 	       " </soap:Header>\n"
 	       " <soap:Body>\n"
 	       "  <d:Probe>\n"
-	       "   <d:Types>dn:NetworkVideoTransmitter d:Device</d:Types>\n"
+	       "   <d:Types>dn:NetworkVideoTransmitter</d:Types>\n"
 	       "  </d:Probe>\n"
 	       " </soap:Body>\n"
 	       "</soap:Envelope>";

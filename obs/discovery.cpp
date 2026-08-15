@@ -555,8 +555,12 @@ void ProbeOnce(const std::string &host, uint16_t port,
 void HandleDiscoveryDatagram(const std::string &xml)
 {
 	std::vector<DiscoveredDevice> devs;
-	if (!ParseDiscoveryResponse(xml, devs))
+	if (!ParseDiscoveryResponse(xml, devs)) {
+		LogLine("datagram parsed 0 devices (echo or unrecognized)");
 		return;
+	}
+	LogLine("datagram parsed " + std::to_string(devs.size()) +
+		" device(s)");
 	for (const auto &dev : devs) {
 		switch (dev.type) {
 		case DiscoveryMsgType::Bye:
