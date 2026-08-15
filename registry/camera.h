@@ -52,6 +52,7 @@ struct ScenePreset {
 // Global application settings (store/config.json).
 struct AppConfig {
 	int discovery_interval_s = 60;
+	std::string discovery_method = "auto"; // "auto" | "sweep" | "multicast"
 	bool hello_listener_enabled = true;
 	int soap_timeout_s = 5;
 	bool soap_retry_media = true;

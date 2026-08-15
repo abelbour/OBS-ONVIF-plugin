@@ -132,6 +132,52 @@ bool &HelloEnabled()
 	return e;
 }
 
+// How the loop discovers devices (Settings → Discovery "Discovery method"):
+//  Auto      — multicast + directed sweep (recommended; works everywhere)
+//  Sweep     — unicast subnet sweep only (no admin, no firewall rule needed)
+//  Multicast — multicast probes only; expect UDP 3702 replies past the firewall
+enum class DiscoveryMethod { Auto, Sweep, Multicast };
+
+DiscoveryMethod &Method()
+{
+	static DiscoveryMethod m = DiscoveryMethod::Auto;
+	return m;
+}
+
+const char *MethodName()
+{
+	switch (Method()) {
+	case DiscoveryMethod::Sweep:
+		return "unicast sweep";
+	case DiscoveryMethod::Multicast:
+		return "multicast + firewall rule";
+	default:
+		return "auto";
+	}
+}
+
+// Reply window (ms) for drilldown after a probe batch; the dock shows
+// "scanning…" while it is open.
+unsigned &ProbeTimeoutMs()
+{
+	static unsigned t = 3000;
+	return t;
+}
+
+// Last probe batch's baseline datagram counter + wall time. The dock renders
+// "scanning…" / "last scan … ago · N replies" from these.
+std::atomic<uint64_t> &ScanTriggerMs()
+{
+	static std::atomic<uint64_t> v(0);
+	return v;
+}
+
+std::atomic<uint64_t> &ScanRepliesAtTrigger()
+{
+	static std::atomic<uint64_t> v(0);
+	return v;
+}
+
 // Diagnostic counters surfaced by the dock's Diagnostics tab.
 std::atomic<uint64_t> &ProbeCounter()
 {
@@ -511,9 +557,21 @@ std::atomic<bool> &ScanRequested()
 	return f;
 }
 
+// Opens the reply window that follows a probe batch: the dock shows the scan
+// status as "scanning" until the window elapses, and counts datagrams parsed
+// since the batch went out (replies since last scan).
+void BeginScanWindow()
+{
+	ScanRepliesAtTrigger().store(DatagramCounter().load());
+	ScanTriggerMs().store(NowMs());
+}
+
 void LoopBody()
 {
 	SeedFromStore();
+
+	const bool useMulticast = Method() != DiscoveryMethod::Sweep;
+	const bool useSweep = Method() != DiscoveryMethod::Multicast;
 
 	intptr_t sock = OpenUdpSocket(kDiscoveryPort, /*joinMulticast=*/true,
 				     /*reuseAddr=*/true);
@@ -532,18 +590,24 @@ void LoopBody()
 		LoopFaultRef().clear();
 	}
 
-	const long sent0 = SendProbeAll(sock, "urn:uuid:obs-onvif-start");
-	ProbeCounter()++;
-	LogLine("startup Probe sent (" + std::to_string(sent0) + " bytes)");
-
+	if (useMulticast) {
+		const long sent0 = SendProbeAll(sock, "urn:uuid:obs-onvif-start");
+		ProbeCounter()++;
+		LogLine("startup Probe sent (" + std::to_string(sent0) +
+			" bytes)");
+	}
 	// Elevation-free fallback: multicast replies to a non-elevated OBS are
 	// often dropped by Windows Firewall; a unicast subnet sweep's replies
 	// are tracked as solicited traffic and always arrive.
-	const long sentD =
-		SendProbeDirected(sock, "urn:uuid:obs-onvif-start-directed");
-	ProbeCounter()++;
-	LogLine("startup directed Probe sweep sent (" + std::to_string(sentD) +
-		" bytes)");
+	if (useSweep) {
+		const long sentD = SendProbeDirected(
+			sock, "urn:uuid:obs-onvif-start-directed");
+		ProbeCounter()++;
+		LogLine("startup directed Probe sweep sent (" +
+			std::to_string(sentD) + " bytes)");
+	}
+	if (useMulticast || useSweep)
+		BeginScanWindow();
 
 	uint64_t nextHeartbeat = NowMs() + (uint64_t)HeartbeatS() * 1000;
 	uint64_t nextRetry = NowMs() + 3000;
@@ -565,7 +629,7 @@ void LoopBody()
 			if (++batch >= 128)
 				break;
 		}
-		if (NowMs() >= nextRetry && retries < 3) {
+		if (useMulticast && NowMs() >= nextRetry && retries < 3) {
 			// Re-probe a few times early on so a dropped startup
 			// probe can't leave the table empty for a whole heartbeat.
 			const std::string id = "urn:uuid:obs-onvif-retry" +
@@ -575,24 +639,33 @@ void LoopBody()
 			LogLine("retry Probe #" + std::to_string(retries) +
 				" sent (" + std::to_string(s) + " bytes)");
 			nextRetry = NowMs() + 3000;
+			BeginScanWindow();
 		}
 		if (ScanRequested().exchange(false)) {
-			const long s =
-				SendProbeAll(sock, "urn:uuid:obs-onvif-scan");
-			const long d = SendProbeDirected(
-				sock, "urn:uuid:obs-onvif-scan-directed");
-			ProbeCounter() += (s > 0 ? 1 : 0) + (d > 0 ? 1 : 0);
-			LogLine("manual Scan Probe sent (multicast " +
-				std::to_string(s) + ", directed " +
-				std::to_string(d) + " bytes)");
+			if (useMulticast) {
+				const long s =
+					SendProbeAll(sock, "urn:uuid:obs-onvif-scan");
+				ProbeCounter() += (s > 0 ? 1 : 0);
+				LogLine("manual Scan Probe sent (multicast " +
+					std::to_string(s) + " bytes)");
+			}
+			if (useSweep) {
+				const long d = SendProbeDirected(
+					sock, "urn:uuid:obs-onvif-scan-directed");
+				ProbeCounter() += (d > 0 ? 1 : 0);
+				LogLine("manual Scan Probe sent (directed sweep " +
+					std::to_string(d) + " bytes)");
+			}
+			BeginScanWindow();
 		}
-		if (NowMs() >= nextHeartbeat) {
+		if (useMulticast && NowMs() >= nextHeartbeat) {
 			SendProbeAll(sock, "urn:uuid:obs-onvif-heartbeat");
 			ProbeCounter()++;
 			LogLine("heartbeat Probe sent");
 			SweepStale();
 			nextHeartbeat =
 				NowMs() + (uint64_t)HeartbeatS() * 1000;
+			BeginScanWindow();
 		}
 	}
 	CloseUdpSocket(sock);
@@ -615,6 +688,15 @@ void Configure(const std::string &configDir, CredsFn creds, MovedFn onMoved,
 			HeartbeatS() = (unsigned)cfg.discovery_interval_s;
 		if (cfg.soap_timeout_s > 0)
 			SoapTimeoutMs() = (unsigned)cfg.soap_timeout_s * 1000;
+		if (cfg.discovery_probe_timeout_s > 0)
+			ProbeTimeoutMs() =
+				(unsigned)cfg.discovery_probe_timeout_s * 1000;
+		if (cfg.discovery_method == "sweep")
+			Method() = DiscoveryMethod::Sweep;
+		else if (cfg.discovery_method == "multicast")
+			Method() = DiscoveryMethod::Multicast;
+		else
+			Method() = DiscoveryMethod::Auto;
 		HelloEnabled() = cfg.hello_listener_enabled;
 	}
 
@@ -663,6 +745,46 @@ std::vector<registry::Camera> Snapshot()
 	for (const auto &kv : Live())
 		out.push_back(kv.second);
 	return out;
+}
+
+ScanStatus ScanStatusSnapshot()
+{
+	ScanStatus st;
+	st.probesSent = ProbeCounter().load();
+	const uint64_t trig = ScanTriggerMs().load();
+	st.lastScanMs = trig;
+	st.scanning =
+		trig != 0 && NowMs() - trig < ProbeTimeoutMs() * 1000;
+	if (trig != 0) {
+		const uint64_t before = ScanRepliesAtTrigger().load();
+		const uint64_t now = DatagramCounter().load();
+		st.repliesSinceScan =
+			now >= before ? (unsigned)(now - before) : 0;
+	}
+	{
+		std::lock_guard<std::mutex> lock(StateMu());
+		for (const auto &kv : Live()) {
+			++st.camerasTotal;
+			if (kv.second.online)
+				++st.camerasOnline;
+		}
+	}
+	return st;
+}
+
+bool Scanning()
+{
+	const uint64_t trig = ScanTriggerMs().load();
+	return trig != 0 && NowMs() - trig < ProbeTimeoutMs() * 1000;
+}
+
+unsigned SecondsSinceLastScan()
+{
+	const uint64_t trig = ScanTriggerMs().load();
+	if (trig == 0)
+		return 0;
+	const uint64_t ms = NowMs() - trig;
+	return ms >= 1000 ? (unsigned)(ms / 1000) : 0;
 }
 
 void ProbeOnce(const std::string &host, uint16_t port,
@@ -792,6 +914,8 @@ std::string Diagnostics()
 			out += " [FAULT: " + LoopFaultRef() + "]";
 	}
 	out += "\nheartbeat every " + std::to_string(HeartbeatS()) + " s";
+	out += "\nscan method: ";
+	out += MethodName();
 	out += "\nhello/byy listener: " +
 	       std::string(HelloEnabled() ? "on" : "off");
 	out += "\nprobes sent: " + std::to_string(ProbesSent());

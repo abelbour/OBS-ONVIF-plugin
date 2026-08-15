@@ -80,6 +80,23 @@ QString String(const char *key)
 	return QString::fromUtf8(obs_module_text(key));
 }
 
+// Composes the localized live scan-status line from the discovery snapshot:
+// "Scanning (N replies)" while a probe batch's reply window is open, else
+// "Last scan Ns ago · M replies · X/Y cameras online", else "No scan yet".
+QString ScanStatusLine()
+{
+	const auto st = obs_onvif::discovery::ScanStatusSnapshot();
+	if (obs_onvif::discovery::Scanning())
+		return String("Dock.Diag.Scanning").arg(st.repliesSinceScan);
+	if (st.lastScanMs != 0)
+		return String("Dock.Diag.LastScan")
+			.arg(obs_onvif::discovery::SecondsSinceLastScan())
+			.arg(st.repliesSinceScan)
+			.arg(st.camerasOnline)
+			.arg(st.camerasTotal);
+	return String("Dock.Diag.NeverScanned");
+}
+
 QString FromUtf8(const std::string &s)
 {
 	return QString::fromUtf8(s.c_str());
@@ -165,8 +182,12 @@ public:
 			Qt::TextSelectableByMouse);
 		unresolved_->setVisible(false);
 
+		scanStatus_ = new QLabel(this);
+		scanStatus_->setWordWrap(true);
+
 		auto *layout = new QVBoxLayout(this);
 		layout->addWidget(table_);
+		layout->addWidget(scanStatus_);
 		layout->addWidget(unresolved_);
 		layout->addLayout(buttons);
 
@@ -207,6 +228,8 @@ private:
 		}
 		if (abi->release_camera_list)
 			abi->release_camera_list(cams);
+
+		scanStatus_->setText(ScanStatusLine());
 
 		// Surface advertised-but-unresolvable devices (auth required /
 		// unreachable) so multicast replies are never silently dropped.
@@ -304,6 +327,7 @@ private:
 	}
 
 	QTableWidget *table_;
+	QLabel *scanStatus_;
 	QLabel *unresolved_;
 };
 
@@ -1495,6 +1519,19 @@ public:
 		text_->setReadOnly(true);
 		text_->setLineWrapMode(QPlainTextEdit::NoWrap);
 
+		scanStatus_ = new QLabel(this);
+		scanStatus_->setWordWrap(true);
+
+		// Poll the live scan status while the tab is visible (the static
+		// text block is only rebuilt on Refresh / Scan).
+		auto *timer = new QTimer(this);
+		timer->setInterval(1000);
+		connect(timer, &QTimer::timeout, this, [this]() {
+			if (isVisible())
+				scanStatus_->setText(ScanStatusLine());
+		});
+		timer->start();
+
 		auto *refresh = new QPushButton(String("Settings.Refresh"), this);
 		connect(refresh, &QPushButton::clicked, this,
 			&DiagnosticsWidget::Refresh);
@@ -1517,6 +1554,7 @@ public:
 
 		auto *layout = new QVBoxLayout(this);
 		layout->addWidget(text_);
+		layout->addWidget(scanStatus_);
 		layout->addLayout(buttons);
 
 		Refresh();
@@ -1537,6 +1575,10 @@ private:
 		       "\\obs-studio\\logs\n";
 		out += "--- discovery ---\n" +
 		       obs_onvif::discovery::Diagnostics();
+		out += "\n--- firewall ---\n";
+		out += "rule obs-onvif-discovery (inbound UDP 3702) covers multicast "
+		       "replies once only;\n";
+		out += "see Settings → Discovery for the setup steps.";
 
 		if (abi) {
 			obs_cast_camera_info_t *arr = nullptr;
@@ -1554,8 +1596,10 @@ private:
 			       std::to_string(n) + " total";
 		}
 		text_->setPlainText(FromUtf8(out));
+		scanStatus_->setText(ScanStatusLine());
 	}
 
+	QLabel *scanStatus_;
 	QPlainTextEdit *text_;
 };
 

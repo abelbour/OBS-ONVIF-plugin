@@ -199,6 +199,7 @@ bool Store::LoadAppConfig(AppConfig &cfg) const
 		return false;
 	cfg.discovery_interval_s = j.value("discovery_interval_s",
 					   cfg.discovery_interval_s);
+	cfg.discovery_method = j.value("discovery_method", cfg.discovery_method);
 	cfg.hello_listener_enabled = j.value("hello_listener_enabled",
 					     cfg.hello_listener_enabled);
 	cfg.soap_timeout_s = j.value("soap_timeout_s", cfg.soap_timeout_s);
@@ -228,6 +229,7 @@ bool Store::SaveAppConfig(const AppConfig &cfg) const
 {
 	fs::create_directories(DirOf(config_dir_));
 	json j{{"discovery_interval_s", cfg.discovery_interval_s},
+	       {"discovery_method", cfg.discovery_method},
 	       {"hello_listener_enabled", cfg.hello_listener_enabled},
 	       {"soap_timeout_s", cfg.soap_timeout_s},
 	       {"soap_retry_media", cfg.soap_retry_media},

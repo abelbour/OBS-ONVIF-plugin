@@ -30,6 +30,7 @@
 #include <plugin-support.h>
 
 #include <cstdlib>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -188,13 +189,40 @@ private:
 		probeTimeout_->setRange(1, 30);
 		probeTimeout_->setSuffix(" s");
 
+		method_ = new QComboBox(this);
+		method_->addItem(String("Settings.MethodAuto"), "auto");
+		method_->addItem(String("Settings.MethodSweep"), "sweep");
+		method_->addItem(String("Settings.MethodMulticast"), "multicast");
+
+		fwHint_ = new QLabel(this);
+		fwHint_->setWordWrap(true);
+		fwHint_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+		fwHint_->setText(String("Settings.FirewallHint"));
+		fwHint_->setStyleSheet(
+			"padding:6px;background:#404040;border-radius:3px;");
+		connect(method_, &QComboBox::currentIndexChanged, this,
+			[this](int) { UpdateFirewallHint(); });
+
 		auto *form = new QFormLayout();
 		form->addRow(helloEnabled_);
 		form->addRow(String("Settings.ProbeTimeout"), probeTimeout_);
+		form->addRow(String("Settings.DiscoveryMethod"), method_);
 
 		auto *tab = new QWidget(this);
-		tab->setLayout(form);
+		auto *layout = new QVBoxLayout(tab);
+		layout->addLayout(form);
+		layout->addWidget(fwHint_);
+		layout->addStretch();
 		return tab;
+	}
+
+	// The firewall-rule guidance applies only when multicast is used and the
+	// reply path depends on an inbound UDP 3702 rule (the sweep method needs
+	// neither admin nor a rule).
+	void UpdateFirewallHint()
+	{
+		fwHint_->setVisible(
+			method_->currentData().toString() == "multicast");
 	}
 
 	QWidget *BuildPtzTab()
@@ -287,6 +315,10 @@ private:
 		soapTimeout_->setValue(cfg.soap_timeout_s);
 		helloEnabled_->setChecked(cfg.hello_listener_enabled);
 		probeTimeout_->setValue(cfg.discovery_probe_timeout_s);
+		method_->setCurrentIndex(
+			std::max(0, method_->findData(
+					  FromUtf8(cfg.discovery_method))));
+		UpdateFirewallHint();
 		keepalive_->setChecked(cfg.soap_keepalive);
 		authCache_->setChecked(cfg.ptz_auth_cache);
 		moveTimeout_->setValue(cfg.ptz_move_timeout_s);
@@ -323,6 +355,8 @@ private:
 		cfg.soap_timeout_s = soapTimeout_->value();
 		cfg.hello_listener_enabled = helloEnabled_->isChecked();
 		cfg.discovery_probe_timeout_s = probeTimeout_->value();
+		cfg.discovery_method =
+			method_->currentData().toString().toStdString();
 		cfg.soap_keepalive = keepalive_->isChecked();
 		cfg.ptz_auth_cache = authCache_->isChecked();
 		cfg.ptz_move_timeout_s = moveTimeout_->value();
@@ -357,6 +391,8 @@ private:
 	QSpinBox *soapTimeout_;
 	QCheckBox *helloEnabled_;
 	QSpinBox *probeTimeout_;
+	QComboBox *method_;
+	QLabel *fwHint_;
 	QCheckBox *keepalive_;
 	QCheckBox *authCache_;
 	QSpinBox *moveTimeout_;

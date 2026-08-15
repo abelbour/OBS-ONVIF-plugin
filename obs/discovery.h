@@ -62,6 +62,28 @@ std::string LoopFault();
 // Thread-safe snapshot of the live camera table.
 std::vector<registry::Camera> Snapshot();
 
+// Live state of the most recent discovery probe batch, for the dock's status
+// line ("scanning…", "last scan … ago · N replies").
+struct ScanStatus {
+	bool scanning = false;         // last probe batch's reply window is open
+	uint64_t probesSent = 0;       // lifetime probes (multicast + directed)
+	unsigned repliesSinceScan = 0; // parsed datagrams since the last batch
+	unsigned camerasOnline = 0;
+	unsigned camerasTotal = 0;
+	uint64_t lastScanMs = 0;       // monotonic ms of last batch (0 = never)
+};
+
+// Thread-safe snapshot of the scan status.
+ScanStatus ScanStatusSnapshot();
+
+// True while the last probe batch's reply window is still open (the dock
+// renders "scanning…"). False before any probe has been sent.
+bool Scanning();
+
+// Whole seconds since the last probe batch (heartbeat/retry/manual scan), or 0
+// when no probe batch has gone out yet.
+unsigned SecondsSinceLastScan();
+
 // One unicast Probe to `host:port`, then processes every ProbeMatch through
 // the shared contact-resolution path. Test/utility entry point that shares all
 // detection logic with the loop.
