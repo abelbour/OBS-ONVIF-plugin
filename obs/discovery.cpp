@@ -421,9 +421,7 @@ void LoopBody()
 	}
 	LogLine("UDP socket open OK on 239.255.255.250:3702");
 
-	const long sent0 =
-		SendUdp(sock, BuildProbe("urn:uuid:obs-onvif-start"),
-			kDiscoveryGroup, kDiscoveryPort);
+	const long sent0 = SendProbeAll(sock, "urn:uuid:obs-onvif-start");
 	LogLine("startup Probe sent (" + std::to_string(sent0) + " bytes)");
 
 	uint64_t nextHeartbeat = NowMs() + (uint64_t)HeartbeatS() * 1000;
@@ -451,22 +449,19 @@ void LoopBody()
 			// probe can't leave the table empty for a whole heartbeat.
 			const std::string id = "urn:uuid:obs-onvif-retry" +
 					       std::to_string(retries++);
-			const long s = SendUdp(sock, BuildProbe(id),
-					       kDiscoveryGroup, kDiscoveryPort);
+			const long s = SendProbeAll(sock, id);
 			LogLine("retry Probe #" + std::to_string(retries) +
 				" sent (" + std::to_string(s) + " bytes)");
 			nextRetry = NowMs() + 3000;
 		}
 		if (ScanRequested().exchange(false)) {
-			const long s = SendUdp(sock,
-					       BuildProbe("urn:uuid:obs-onvif-scan"),
-					       kDiscoveryGroup, kDiscoveryPort);
+			const long s =
+				SendProbeAll(sock, "urn:uuid:obs-onvif-scan");
 			LogLine("manual Scan Probe sent (" + std::to_string(s) +
 				" bytes)");
 		}
 		if (NowMs() >= nextHeartbeat) {
-			SendUdp(sock, BuildProbe("urn:uuid:obs-onvif-heartbeat"),
-				kDiscoveryGroup, kDiscoveryPort);
+			SendProbeAll(sock, "urn:uuid:obs-onvif-heartbeat");
 			LogLine("heartbeat Probe sent");
 			SweepStale();
 			nextHeartbeat =

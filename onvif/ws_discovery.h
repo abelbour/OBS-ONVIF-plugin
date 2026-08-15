@@ -44,4 +44,11 @@ long SendUdp(intptr_t sock, const std::string &payload, const std::string &host,
 long RecvUdp(intptr_t sock, std::string &out, unsigned timeoutMs);
 int CloseUdpSocket(intptr_t sock);
 
+// Sends the WS-Discovery Probe on every up, multicast-capable, non-loopback
+// interface. The OS default route may send multicast out the wrong adapter on
+// multi-interface machines (VPN/virtual adapters), leaving cameras unreached
+// even though the packet is echoed back locally. Falls back to the default
+// interface when none are enumerated. Returns total bytes sent.
+long SendProbeAll(intptr_t sock, const std::string &messageId);
+
 } // namespace obs_onvif

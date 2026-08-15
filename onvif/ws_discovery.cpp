@@ -2,9 +2,11 @@
 
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mstcpip.h>
 
 #include "xml.h"
 
@@ -55,6 +57,42 @@ int FamilyForHost(const std::string &host)
 	if (host.find(':') != std::string::npos)
 		return AF_INET6;
 	return AF_INET;
+}
+
+// IPv4 addresses of up, multicast-capable, non-loopback interfaces. The probe
+// is sent on each so cameras are reached regardless of which adapter is the
+// OS default route (VPNs / virtual adapters frequently hijack it).
+std::vector<uint32_t> MulticastInterfaces()
+{
+	EnsureWinsock();
+	std::vector<uint32_t> out;
+	SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (s == INVALID_SOCKET)
+		return out;
+	DWORD bytes = 0;
+	INTERFACE_INFO infos[32];
+	if (WSAIoctl(s, SIO_GET_INTERFACE_LIST, nullptr, 0, infos,
+		     sizeof infos, &bytes, nullptr, nullptr) == 0) {
+		const size_t n = bytes / sizeof(INTERFACE_INFO);
+		for (size_t i = 0; i < n; ++i) {
+			const sockaddr_in *addr = reinterpret_cast<const sockaddr_in *>(
+				&infos[i].iiAddress);
+			const ULONG flags = infos[i].iiFlags;
+			if ((flags & IFF_UP) && (flags & IFF_MULTICAST) &&
+			    !(flags & IFF_LOOPBACK))
+				out.push_back(addr->sin_addr.s_addr);
+		}
+	}
+	closesocket(s);
+	return out;
+}
+
+// Multicast group address as an in_addr.
+in_addr DiscoveryGroupAddr()
+{
+	in_addr a{};
+	inet_pton(AF_INET, kDiscoveryGroup, &a);
+	return a;
 }
 
 // Device entries nested in the SOAP Body: ProbeMatch lives under a
@@ -168,14 +206,28 @@ intptr_t OpenUdpSocket(uint16_t bindPort, bool joinMulticast, bool reuseAddr)
 	}
 
 	if (joinMulticast) {
-		ip_mreq mreq{};
-		inet_pton(AF_INET, kDiscoveryGroup, &mreq.imr_multiaddr);
-		mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-		if (setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-			       (const char *)&mreq, sizeof mreq) == SOCKET_ERROR) {
-			closesocket(sock);
-			return -1;
+		const in_addr group = DiscoveryGroupAddr();
+		const std::vector<uint32_t> ifaces = MulticastInterfaces();
+		if (ifaces.empty()) {
+			ip_mreq mreq{};
+			mreq.imr_multiaddr = group;
+			mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+			setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+				   (const char *)&mreq, sizeof mreq);
+		} else {
+			for (uint32_t a : ifaces) {
+				ip_mreq mreq{};
+				mreq.imr_multiaddr = group;
+				mreq.imr_interface.s_addr = a;
+				setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+					   (const char *)&mreq, sizeof mreq);
+			}
 		}
+		// Do not receive our own probes back — cuts the echo noise the
+		// discovery log was filling with "parsed 0 devices".
+		BOOL loop = FALSE;
+		setsockopt(sock, IPPROTO_IP, IP_MULTICAST_LOOP,
+			   (const char *)&loop, sizeof loop);
 		// DHCP-sack at scale: during a network event a burst of Hello/
 		// Bye announcements can arrive faster than the (SOAP-resolving)
 		// loop drains them. A larger receive buffer absorbs the burst so
@@ -218,6 +270,25 @@ long SendUdp(intptr_t sock, const std::string &payload, const std::string &host,
 				resolved->ai_addr, (int)resolved->ai_addrlen);
 	freeaddrinfo(resolved);
 	return sent == SOCKET_ERROR ? -1 : (long)sent;
+}
+
+long SendProbeAll(intptr_t sock, const std::string &messageId)
+{
+	const std::string payload = BuildProbe(messageId);
+	const std::vector<uint32_t> ifaces = MulticastInterfaces();
+	if (ifaces.empty())
+		return SendUdp(sock, payload, kDiscoveryGroup, kDiscoveryPort);
+	long total = 0;
+	for (uint32_t a : ifaces) {
+		const DWORD addr = a;
+		setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_IF,
+			   (const char *)&addr, sizeof addr);
+		const long s = SendUdp(sock, payload, kDiscoveryGroup,
+				      kDiscoveryPort);
+		if (s > 0)
+			total += s;
+	}
+	return total;
 }
 
 long RecvUdp(intptr_t sock, std::string &out, unsigned timeoutMs)
