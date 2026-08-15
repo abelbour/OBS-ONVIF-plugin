@@ -1,0 +1,137 @@
+::group::Configuring ...
+Preset CMake variables:
+
+  CMAKE_COMPILE_WARNING_AS_ERROR:BOOL="TRUE"
+  ENABLE_FRONTEND_API:BOOL="TRUE"
+  ENABLE_QT:BOOL="TRUE"
+
+-- Selecting Windows SDK version 10.0.22621.0 to target Windows 10.0.20348.
+-- The C compiler identification is MSVC 19.44.35228.0
+-- The CXX compiler identification is MSVC 19.44.35228.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Setting up Pre-Built obs-deps (x64)
+-- Downloading https://github.com/obsproject/obs-deps/releases/download/2026-07-15/windows-deps-2026-07-15-x64.zip
+-- Downloading https://github.com/obsproject/obs-deps/releases/download/2026-07-15/windows-deps-2026-07-15-x64.zip - done
+-- Setting up Pre-Built obs-deps (x64) - done
+-- Setting up Pre-Built Qt6 (x64)
+-- Downloading https://github.com/obsproject/obs-deps/releases/download/2026-07-15/windows-deps-qt6-2026-07-15-x64.zip
+-- Downloading https://github.com/obsproject/obs-deps/releases/download/2026-07-15/windows-deps-qt6-2026-07-15-x64.zip - done
+-- Setting up Pre-Built Qt6 (x64) - done
+-- Setting up OBS sources (x64)
+-- Downloading https://github.com/obsproject/obs-studio/archive/refs/tags/32.2.1.zip
+-- Downloading https://github.com/obsproject/obs-studio/archive/refs/tags/32.2.1.zip - done
+-- Setting up OBS sources (x64) - done
+-- Configure OBS sources (x64)
+CMake Warning (dev) at cmake/finders/FindDetours.cmake:65 (message):
+  Failed to find detours version.
+Call Stack (most recent call first):
+  plugins/win-capture/graphics-hook/CMakeLists.txt:3 (find_package)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning at plugins/win-dshow/virtualcam-module/CMakeLists.txt:14 (message):
+  Empty Virtual Camera GUID set.
+
+
+                      _                   _             _ _       
+                 ___ | |__  ___       ___| |_ _   _  __| (_) ___  
+                / _ \| '_ \/ __|_____/ __| __| | | |/ _` | |/ _ \ 
+               | (_) | |_) \__ \_____\__ \ |_| |_| | (_| | | (_) |
+                \___/|_.__/|___/     |___/\__|\__,_|\__,_|_|\___/ 
+
+OBS:  Application Version: 32.2.1 - Build Number: 31915679808
+==================================================================================
+
+
+------------------------       Enabled Features           ------------------------
+ - Direct3D 11 renderer
+ - OpenGL renderer
+------------------------       Disabled Features          ------------------------
+ - Plugin Support
+ - User Interface
+----------------------------------------------------------------------------------
+-- Configure OBS sources (x64) - done
+-- Build OBS sources (Debug - x64)
+-- Build OBS sources (Debug - x64) - done
+-- Build OBS sources (Release - x64)
+-- Build OBS sources (Reelase - x64) - done
+-- Install OBS sources (x64)
+-- Install OBS sources (x64) - done
+-- Found SIMDe: D:/a/OBS-ONVIF-plugin/OBS-ONVIF-plugin/.deps/obs-deps-2026-07-15-x64/include (found version "0.8.2")
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Failed
+-- Looking for pthread_create in pthreads
+-- Looking for pthread_create in pthreads - not found
+-- Looking for pthread_create in pthread
+-- Looking for pthread_create in pthread - not found
+-- Found Threads: TRUE
+-- Performing Test HAVE_STDATOMIC
+-- Performing Test HAVE_STDATOMIC - Success
+-- Found WrapAtomic: TRUE
+-- Configuring done (87.8s)
+-- Generating done (0.6s)
+-- Build files have been written to: D:/a/OBS-ONVIF-plugin/OBS-ONVIF-plugin/build_x64
+::endgroup::
+::group::Building ...
+
+  1>Checking Build System
+  Building Custom Rule D:/a/OBS-ONVIF-plugin/OBS-ONVIF-plugin/third_party/tinyxml2/CMakeLists.txt
+cl : command line  warning D9025: overriding '/W3' with '/w' [D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\onvif\third_party\tinyxml2\tinyxml2_lib.vcxproj]
+  tinyxml2.cpp
+  Building Custom Rule D:/a/OBS-ONVIF-plugin/OBS-ONVIF-plugin/CMakeLists.txt
+  plugin-support.c
+  tinyxml2_lib.vcxproj -> D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\onvif\third_party\tinyxml2\RelWithDebInfo\tinyxml2_lib.lib
+  Building Custom Rule D:/a/OBS-ONVIF-plugin/OBS-ONVIF-plugin/onvif/CMakeLists.txt
+  plugin-support.vcxproj -> D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\RelWithDebInfo\plugin-support.lib
+  base64.cpp
+  identity.cpp
+  onvif_client.cpp
+  sha1.cpp
+  soap_client.cpp
+  ws_discovery.cpp
+  ws_security.cpp
+  xml.cpp
+  onvif_core.vcxproj -> D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\onvif\RelWithDebInfo\onvif_core.lib
+  Building Custom Rule D:/a/OBS-ONVIF-plugin/OBS-ONVIF-plugin/registry/CMakeLists.txt
+  apply.cpp
+  ptz_controller.cpp
+  registry.cpp
+  store.cpp
+  worker.cpp
+  registry_lib.vcxproj -> D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\registry\RelWithDebInfo\registry_lib.lib
+  Building Custom Rule D:/a/OBS-ONVIF-plugin/OBS-ONVIF-plugin/obs/CMakeLists.txt
+  abi.cpp
+  obs_abi.vcxproj -> D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\obs\RelWithDebInfo\obs_abi.lib
+  Automatic MOC and UIC for target obs-onvif
+  Building Custom Rule D:/a/OBS-ONVIF-plugin/OBS-ONVIF-plugin/CMakeLists.txt
+  apply_prompt.cpp
+  dock.cpp
+  settings_dialog.cpp
+  glue.cpp
+  discovery.cpp
+  scene_presets.cpp
+  hotkeys.cpp
+  obs_apply.cpp
+  obs_mapping.cpp
+D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\obs\settings_dialog.cpp(319,9): error C2589: '(': illegal token on right side of '::' [D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\obs-onvif.vcxproj]
+  mocs_compilation_RelWithDebInfo.cpp
+D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\obs\settings_dialog.cpp(320,40): error C2059: syntax error: ')' [D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\obs-onvif.vcxproj]
+
+Build FAILED.
+
+cl : command line  warning D9025: overriding '/W3' with '/w' [D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\onvif\third_party\tinyxml2\tinyxml2_lib.vcxproj]
+D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\obs\settings_dialog.cpp(319,9): error C2589: '(': illegal token on right side of '::' [D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\obs-onvif.vcxproj]
+D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\obs\settings_dialog.cpp(320,40): error C2059: syntax error: ')' [D:\a\OBS-ONVIF-plugin\OBS-ONVIF-plugin\build_x64\obs-onvif.vcxproj]
+    1 Warning(s)
+    2 Error(s)
+
+Time Elapsed 00:00:15.88
+BUILD EXCEPTION: cmake --build --preset windows-x64 --config RelWithDebInfo --parallel -- /consoleLoggerParameters:Summary /noLogo exited with non-zero code 1.
