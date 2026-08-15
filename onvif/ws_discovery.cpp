@@ -233,6 +233,34 @@ std::string BuildProbeV11(const std::string &messageId)
 	       "</soap:Envelope>";
 }
 
+// WS-Discovery Probe matching *all* service types (empty Types). Some camera
+// firmwares only answer an unfiltered Probe, even though the NVT type in
+// BuildProbe/BuildProbeV11 is the ONVIF-normative one — the reference tools
+// (ODM, ONVIF WS-Discovery spec §4/§5) rely on this blanket form.
+std::string BuildProbeAny(const std::string &messageId)
+{
+	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+	       "<soap:Envelope "
+	       "xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\"\n"
+	       " xmlns:wsa=\"http://www.w3.org/2005/08/addressing\"\n"
+	       " xmlns:d=\"http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01\"\n"
+	       " xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\">\n"
+	       " <soap:Header>\n"
+	       "  <wsa:Action>"
+	       "http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01/Probe"
+	       "</wsa:Action>\n"
+	       "  <wsa:MessageID>" +
+	       messageId +
+	       "</wsa:MessageID>\n"
+	       "  <wsa:To>urn:docs-oasis-open-org:ws-dd:ns:discovery:2009:01"
+	       "</wsa:To>\n"
+	       " </soap:Header>\n"
+	       " <soap:Body>\n"
+	       "  <d:Probe/>\n"
+	       " </soap:Body>\n"
+	       "</soap:Envelope>";
+}
+
 bool ParseDiscoveryResponse(const std::string &xml,
 			    std::vector<DiscoveredDevice> &out)
 {
@@ -364,22 +392,25 @@ long SendUdp(intptr_t sock, const std::string &payload, const std::string &host,
 
 long SendProbeAll(intptr_t sock, const std::string &messageId)
 {
-	// Send both WS-Discovery versions (v1 April-2005 and v1.1 OASIS) on every
-	// multicast interface; some cameras only answer one of the two.
+	// Send both WS-Discovery versions (v1 April-2005 and v1.1 OASIS) plus the
+	// unfiltered blanket probe on every multicast interface; different cameras
+	// answer different forms.
 	const std::string v1 = BuildProbe(messageId);
 	const std::string v11 = BuildProbeV11(messageId);
+	const std::string any = BuildProbeAny(messageId);
 	const std::vector<UdpIface> ifaces = MulticastInterfaces();
 	if (ifaces.empty()) {
 		const long a = SendUdp(sock, v1, kDiscoveryGroup, kDiscoveryPort);
 		const long b = SendUdp(sock, v11, kDiscoveryGroup, kDiscoveryPort);
-		return (a > 0 ? a : 0) + (b > 0 ? b : 0);
+		const long c = SendUdp(sock, any, kDiscoveryGroup, kDiscoveryPort);
+		return (a > 0 ? a : 0) + (b > 0 ? b : 0) + (c > 0 ? c : 0);
 	}
 	long total = 0;
 	for (const UdpIface &iface : ifaces) {
 		const DWORD addr = iface.addr;
 		setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_IF,
 			   (const char *)&addr, sizeof addr);
-		for (const std::string &payload : {v1, v11}) {
+		for (const std::string &payload : {v1, v11, any}) {
 			const long s = SendUdp(sock, payload, kDiscoveryGroup,
 					      kDiscoveryPort);
 			if (s > 0)

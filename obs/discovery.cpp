@@ -73,6 +73,15 @@ std::thread &LoopThread()
 	return t;
 }
 
+// Why the background loop stopped, if it failed at startup (socket bind, no
+// interfaces, etc.). Empty when the loop is fine. Diagnostics surfaces it so a
+// dead loop is not mistaken for "no cameras on the network".
+std::string &LoopFaultRef()
+{
+	static std::string f;
+	return f;
+}
+
 std::string &ConfigDir()
 {
 	static std::string d;
@@ -356,6 +365,11 @@ void ProcessBye(const DiscoveredDevice &dev)
 	{
 		std::lock_guard<std::mutex> lock(StateMu());
 		for (auto &kv : Live()) {
+			// Manual cameras were verified at add time and don't
+			// depend on multicast liveness (heartbeat probes may
+			// never revive them if multicast is blocked).
+			if (kv.second.manual)
+				continue;
 			for (const std::string &xa : dev.xaddrs) {
 				if (kv.second.xaddr == xa &&
 				    kv.second.online) {
@@ -505,9 +519,18 @@ void LoopBody()
 				     /*reuseAddr=*/true);
 	if (sock == -1) {
 		LogLine("UDP socket open FAILED (is port 3702 in use?)");
+		{
+			std::lock_guard<std::mutex> lock(StateMu());
+			LoopFaultRef() =
+				"UDP socket open FAILED (is port 3702 in use?)";
+		}
 		return;
 	}
 	LogLine("UDP socket open OK on 239.255.255.250:3702");
+	{
+		std::lock_guard<std::mutex> lock(StateMu());
+		LoopFaultRef().clear();
+	}
 
 	const long sent0 = SendProbeAll(sock, "urn:uuid:obs-onvif-start");
 	ProbeCounter()++;
@@ -612,6 +635,12 @@ void RequestScan()
 bool Running()
 {
 	return Configured().load();
+}
+
+std::string LoopFault()
+{
+	std::lock_guard<std::mutex> lock(StateMu());
+	return LoopFaultRef();
 }
 
 std::vector<registry::Camera> Snapshot()
@@ -745,6 +774,11 @@ std::vector<PendingContact> PendingContacts()
 std::string Diagnostics()
 {
 	std::string out = "loop " + std::string(Running() ? "running" : "stopped");
+	{
+		std::lock_guard<std::mutex> lock(StateMu());
+		if (!LoopFaultRef().empty())
+			out += " [FAULT: " + LoopFaultRef() + "]";
+	}
 	out += "\nheartbeat every " + std::to_string(HeartbeatS()) + " s";
 	out += "\nhello/byy listener: " +
 	       std::string(HelloEnabled() ? "on" : "off");

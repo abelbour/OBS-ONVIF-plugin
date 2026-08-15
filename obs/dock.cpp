@@ -35,6 +35,7 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QVariant>
 
@@ -168,6 +169,14 @@ public:
 		layout->addWidget(table_);
 		layout->addWidget(unresolved_);
 		layout->addLayout(buttons);
+
+		// Discovery runs in the background; keep the table live without
+		// forcing the user to hit Refresh (a small periodic rebuild is
+		// cheap for a handful of cameras).
+		auto *timer = new QTimer(this);
+		timer->setInterval(5000);
+		connect(timer, &QTimer::timeout, this, [this]() { Refresh(); });
+		timer->start();
 
 		Refresh();
 	}
@@ -538,6 +547,10 @@ public:
 		RefreshCameras();
 	}
 
+	// Rebuilds the camera selector so a manual add / discovery update shows
+	// up without restarting OBS (invoked by the dock on tab change).
+	void RefreshCameraList() { RefreshCameras(); }
+
 private:
 	QString CurrentCameraId() const
 	{
@@ -874,6 +887,10 @@ public:
 		RefreshCameras();
 	}
 
+	// Rebuilds the camera selector (the dock refreshes all selectors when
+	// the active tab changes so newly added / discovered cameras appear).
+	void RefreshCameraList() { RefreshCameras(); }
+
 private:
 	QPushButton *PadButton(const char *key, double pan, double tilt,
 			       double zoom)
@@ -903,7 +920,10 @@ private:
 
 	void RefreshCameras()
 	{
-		PopulateCameraCombo(cameras_, /*onlineOnly=*/true);
+		// Include offline/manual cameras: manual entries stay selectable
+		// (the ABI surfaces "camera offline" for live-only PTZ ops). Only
+		// showing online cameras hid manually-added ones from this tab.
+		PopulateCameraCombo(cameras_, /*onlineOnly=*/false);
 	}
 
 	/* M4 §6.8: press → Move, release → Stop. The ABI enqueues on the
@@ -983,6 +1003,10 @@ public:
 
 		RefreshCameras();
 	}
+
+	// Rebuilds the camera selector on dock tab changes so newly added or
+	// discovered cameras appear without a manual refresh button.
+	void RefreshCameraList() { RefreshCameras(); }
 
 private:
 	static QHBoxLayout *LabeledRow(QWidget *parent, const QString &label,
@@ -1126,7 +1150,10 @@ private:
 
 	void RefreshCameras()
 	{
-		PopulateCameraCombo(cameras_, /*onlineOnly=*/true);
+		// Same as PTZ: offline / manually-added cameras stay selectable so
+		// the Config panel is reachable for a camera discovery couldn't
+		// verify (only auto-apply + persistence hide nothing).
+		PopulateCameraCombo(cameras_, /*onlineOnly=*/false);
 	}
 
 	void LoadCurrent()
@@ -1557,13 +1584,32 @@ void LoadDock()
 	if (g_dock_loaded)
 		return;
 	auto *tabs = new QTabWidget();
-	tabs->addTab(new CamerasWidget(tabs), String("Dock.TabCameras"));
-	tabs->addTab(new SourcesWidget(tabs), String("Dock.TabSources"));
-	tabs->addTab(new PresetsWidget(tabs), String("Dock.TabPresets"));
-	tabs->addTab(new PtzWidget(tabs), String("Dock.TabPtz"));
-	tabs->addTab(new ConfigWidget(tabs), String("Dock.TabConfig"));
-	tabs->addTab(new PolicyWidget(tabs), String("Dock.TabPolicy"));
-	tabs->addTab(new DiagnosticsWidget(tabs), String("Dock.TabDiagnostics"));
+
+	auto *cameras = new CamerasWidget(tabs);
+	auto *sources = new SourcesWidget(tabs);
+	auto *presets = new PresetsWidget(tabs);
+	auto *ptz = new PtzWidget(tabs);
+	auto *config = new ConfigWidget(tabs);
+	auto *policy = new PolicyWidget(tabs);
+	auto *diag = new DiagnosticsWidget(tabs);
+
+	tabs->addTab(cameras, String("Dock.TabCameras"));
+	tabs->addTab(sources, String("Dock.TabSources"));
+	tabs->addTab(presets, String("Dock.TabPresets"));
+	tabs->addTab(ptz, String("Dock.TabPtz"));
+	tabs->addTab(config, String("Dock.TabConfig"));
+	tabs->addTab(policy, String("Dock.TabPolicy"));
+	tabs->addTab(diag, String("Dock.TabDiagnostics"));
+
+	// Camera selectors are built once at dock creation; refresh them when
+	// the user switches tabs so a manual add / discovery update (which
+	// happens after the dock exists) is immediately selectable.
+	QObject::connect(tabs, &QTabWidget::currentChanged, tabs,
+			 [presets, ptz, config](int) {
+				 presets->RefreshCameraList();
+				 ptz->RefreshCameraList();
+				 config->RefreshCameraList();
+			 });
 
 	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("Dock.Title"),
 					 tabs)) {

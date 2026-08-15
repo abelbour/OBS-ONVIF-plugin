@@ -43,6 +43,10 @@ std::string BuildProbe(const std::string &messageId);
 // both versions on every interface.
 std::string BuildProbeV11(const std::string &messageId);
 
+// WS-Discovery v1.1 Probe matching all service types (empty Types filter),
+// for firmware that ignores a typed NetworkVideoTransmitter probe.
+std::string BuildProbeAny(const std::string &messageId);
+
 // Parses a ProbeMatches/Hello/Bye response envelope into one DiscoveredDevice
 // per discovered element. Version-tolerant: namespace prefixes are ignored.
 // Returns true when at least one entry was produced.

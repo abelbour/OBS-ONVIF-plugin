@@ -54,6 +54,11 @@ void RequestScan();
 // True while the loop is (or was) configured and not yet stopped.
 bool Running();
 
+// Why the discovery loop stopped at startup (e.g. UDP port 3702 bind failure),
+// or empty when healthy. Diagnostics surfaces this so a dead loop is not
+// mistaken for "no cameras on the network".
+std::string LoopFault();
+
 // Thread-safe snapshot of the live camera table.
 std::vector<registry::Camera> Snapshot();
 
