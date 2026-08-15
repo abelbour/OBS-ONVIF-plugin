@@ -1,9 +1,12 @@
 #include "glue.h"
 
+#include <windows.h>
+
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <plugin-support.h>
 
+#include <string>
 #include <tuple>
 
 #include "abi.h"
@@ -121,8 +124,94 @@ void OnDiscoveryMoved(const std::string &camera_id,
 		payload, false);
 }
 
+// Is the current process elevated (administrator token)?
+bool IsElevated()
+{
+	HANDLE token = nullptr;
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+		return false;
+	TOKEN_ELEVATION elev{};
+	DWORD size = 0;
+	const bool ok = GetTokenInformation(token, TokenElevation, &elev,
+					    sizeof elev, &size);
+	CloseHandle(token);
+	return ok && elev.TokenIsElevated != 0;
+}
+
+// Full path of the running executable (obs64.exe), for the rule's program
+// filter.
+std::wstring ExePathW()
+{
+	wchar_t buf[MAX_PATH] = {};
+	const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+	return std::wstring(buf, n);
+}
+
+// Runs a netsh command line hidden (CREATE_NO_WINDOW) and waits for it.
+void RunNetshHidden(const std::wstring &args)
+{
+	STARTUPINFOW si{};
+	si.cb = sizeof si;
+	PROCESS_INFORMATION pi{};
+	std::wstring cmdline = L"netsh.exe " + args;
+	if (!CreateProcessW(L"C:\\Windows\\System32\\netsh.exe",
+			    &cmdline[0], nullptr, nullptr, FALSE,
+			    CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+		return;
+	WaitForSingleObject(pi.hProcess, 15000);
+	DWORD code = 0;
+	GetExitCodeProcess(pi.hProcess, &code);
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	obs_log(LOG_INFO, "[obs-onvif] netsh exit code: %lu",
+		(unsigned long)code);
+}
+
+// Windows Firewall drops the camera's unicast ProbeMatch reply to the plugin's
+// UDP 3702 socket: an outbound multicast Probe does NOT create the "solicited
+// traffic" exemption (that only matches replies from the exact address we sent
+// to, i.e. the multicast group). Reference tools avoid this by installing an
+// inbound rule — which requires admin, which is why ODM must always run
+// elevated while a non-elevated OBS silently discovers nothing.
+//
+// When OBS is elevated we install the rule idempotently; otherwise we log the
+// exact one-time command for the user (silently spawning a UAC prompt every
+// launch would be worse).
+void EnsureFirewallRule()
+{
+	static bool done = false;
+	if (done)
+		return;
+	done = true;
+
+	// Drop a stale rule from an earlier install, then add it back so the
+	// program path always matches the currently running OBS binary.
+	RunNetshHidden(L"advfirewall firewall delete rule "
+		       L"name=\"obs-onvif-discovery\"");
+	if (!IsElevated()) {
+		obs_log(LOG_WARNING,
+			"[obs-onvif] Windows Firewall may block inbound "
+			"WS-Discovery replies on UDP 3702 (ODM works because it "
+			"runs as admin and installs its own rule). Fix once as "
+			"Administrator:");
+		obs_log(LOG_WARNING,
+			"[obs-onvif]   netsh advfirewall firewall add rule "
+			"name=\"obs-onvif-discovery\" dir=in action=allow "
+			"protocol=UDP localport=3702");
+		return;
+	}
+	RunNetshHidden(L"advfirewall firewall add rule "
+		       L"name=\"obs-onvif-discovery\" dir=in action=allow "
+		       L"protocol=UDP localport=3702 program=\"" +
+		       ExePathW() + L"\"");
+	obs_log(LOG_INFO,
+		"[obs-onvif] installed Windows Firewall allow rule for inbound "
+		"UDP 3702 (obs-onvif-discovery)");
+}
+
 void StartDiscovery()
 {
+	EnsureFirewallRule();
 	obs_onvif::discovery::Configure(
 		ConfigDir(), LoadCredentials, OnDiscoveryMoved,
 		[](const std::string &line) {
