@@ -2,6 +2,7 @@
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
+#include <plugin-support.h>
 
 #include <tuple>
 
