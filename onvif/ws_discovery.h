@@ -26,9 +26,14 @@ struct DiscoveredDevice {
 	uint64_t lastSeen = 0;           // monotonic ms, managed by the caller
 };
 
-// WS-Discovery v1 (April-2005) Probe request; probes BOTH the NVT and the
-// generic Device contract type for broad compatibility.
+// WS-Discovery v1 (April-2005) Probe request; probes the NVT contract type for
+// broad compatibility.
 std::string BuildProbe(const std::string &messageId);
+
+// WS-Discovery v1.1 (OASIS, 2009-01) Probe request. Some cameras/firmware only
+// answer v1.1 probes (WCF-based tools like ODM send v1.1), so the loop sends
+// both versions on every interface.
+std::string BuildProbeV11(const std::string &messageId);
 
 // Parses a ProbeMatches/Hello/Bye response envelope into one DiscoveredDevice
 // per discovered element. Version-tolerant: namespace prefixes are ignored.
