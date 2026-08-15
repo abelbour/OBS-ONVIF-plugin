@@ -9,6 +9,14 @@ namespace obs_onvif {
 constexpr uint16_t kDiscoveryPort = 3702;
 constexpr const char *kDiscoveryGroup = "239.255.255.250";
 
+// One enumerable multicast-capable IPv4 interface. `addr` is in network byte
+// order; `ifindex` is 0 when only the legacy fallback supplied it.
+struct UdpIface {
+	uint32_t addr = 0;
+	unsigned long ifindex = 0;
+	std::string name;
+};
+
 // The kind of WS-Discovery message a parsed device entry came from. The
 // discovery loop uses this to apply each entry cheaply: a Hello only refreshes
 // presence for a known camera (no SOAP), a Bye marks it offline immediately,
@@ -55,5 +63,10 @@ int CloseUdpSocket(intptr_t sock);
 // even though the packet is echoed back locally. Falls back to the default
 // interface when none are enumerated. Returns total bytes sent.
 long SendProbeAll(intptr_t sock, const std::string &messageId);
+
+// Human-readable list of the multicast interfaces the socket code joins and
+// sends probes on (for the Diagnostics tab). Example:
+// "2 multicast interface(s)\n  192.168.1.10 (idx 12) Wi-Fi".
+std::string MulticastInterfaceSummary();
 
 } // namespace obs_onvif

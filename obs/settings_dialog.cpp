@@ -19,6 +19,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
@@ -157,14 +158,25 @@ private:
 		soapTimeout_->setRange(1, 30);
 		soapTimeout_->setSuffix(" s");
 
+		defaultUser_ = new QLineEdit(this);
+		defaultPass_ = new QLineEdit(this);
+		defaultPass_->setEchoMode(QLineEdit::Password);
+
 		auto *form = new QFormLayout();
 		form->addRow(String("Settings.DefaultStream"), stream_);
 		form->addRow(String("Settings.PromptTimeout"), promptTimeout_);
 		form->addRow(String("Settings.DiscoveryInterval"), discoveryInterval_);
 		form->addRow(String("Settings.SoapTimeout"), soapTimeout_);
+		form->addRow(String("Settings.DefaultUser"), defaultUser_);
+		form->addRow(String("Settings.DefaultPass"), defaultPass_);
+		auto *hint = new QLabel(String("Settings.DefaultCredsHint"), this);
+		hint->setWordWrap(true);
 
 		auto *tab = new QWidget(this);
-		tab->setLayout(form);
+		auto *layout = new QVBoxLayout(tab);
+		layout->addLayout(form);
+		layout->addWidget(hint);
+		layout->addStretch();
 		return tab;
 	}
 
@@ -280,6 +292,22 @@ private:
 		moveTimeout_->setValue(cfg.ptz_move_timeout_s);
 		stopMode_->setCurrentIndex(cfg.ptz_stop_mode == "queued" ? 1 : 0);
 		minInterval_->setValue(cfg.ptz_min_interval_ms);
+
+		// Default ONVIF credentials (Credential Vault, "obs-onvif/default").
+		// Discovery uses these when a discovered camera can't be reached
+		// with camera-specific or empty credentials.
+		std::string secret;
+		bool found = false;
+		if (Store::ReadCredential(Store::DefaultCredTarget(), secret, found) &&
+		    found && !secret.empty()) {
+			const size_t at = secret.find(':');
+			defaultUser_->setText(
+				FromUtf8(secret.substr(0, at)));
+			defaultPass_->setText(FromUtf8(
+				at == std::string::npos
+					? std::string()
+					: secret.substr(at + 1)));
+		}
 	}
 
 	void WriteSettings()
@@ -304,6 +332,17 @@ private:
 				: "immediate";
 		cfg.ptz_min_interval_ms = minInterval_->value();
 		const bool saved = store.SaveAppConfig(cfg);
+
+		// Persist the default credentials (empty clears them).
+		const std::string user = defaultUser_->text().trimmed().toStdString();
+		const std::string pass = defaultPass_->text().trimmed().toStdString();
+		if (user.empty() && pass.empty()) {
+			Store::DeleteCredential(Store::DefaultCredTarget());
+		} else {
+			Store::WriteCredential(Store::DefaultCredTarget(),
+					       user + ":" + pass);
+		}
+
 		if (saved)
 			obs_onvif::abi::ApplyAppConfig(cfg);
 		status_->setText(saved ? String("Settings.Saved")
@@ -323,6 +362,8 @@ private:
 	QSpinBox *moveTimeout_;
 	QComboBox *stopMode_;
 	QSpinBox *minInterval_;
+	QLineEdit *defaultUser_;
+	QLineEdit *defaultPass_;
 	QPlainTextEdit *logView_;
 };
 

@@ -87,6 +87,19 @@ uint64_t ProbesSent();
 uint64_t DatagramsParsed();
 unsigned LastParsedDevices();
 
+// One advertised device that could not be resolved (auth required, no stable
+// identity, or unreachable endpoint). Surfaced so discovery failures are
+// visible instead of silently dropping the camera.
+struct PendingContact {
+	std::string xaddr;
+	std::string reason; // e.g. "GetDeviceInformation: SOAP fault ..."
+	uint64_t lastAttempt = 0; // monotonic ms
+	unsigned attempts = 0;
+};
+
+// Thread-safe snapshot of the unresolved-contacts table.
+std::vector<PendingContact> PendingContacts();
+
 // Compact, human-readable summary of the discovery loop state.
 std::string Diagnostics();
 

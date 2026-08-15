@@ -187,6 +187,42 @@ void RunPhase(const std::string &phase, const std::string &host,
 
 } // namespace
 
+// Unresolved contacts: a ProbeMatch for an unreachable endpoint must be
+// surfaced through PendingContacts() instead of silently dropped. Hermetic —
+// no server, the dead port fails contact resolution fast.
+static void TestPendingUnreachable()
+{
+	const std::string envelope =
+		"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+		"<soap:Envelope "
+		"xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\"\n"
+		" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\">\n"
+		" <soap:Body>\n"
+		"  <d:ProbeMatches>\n"
+		"   <d:ProbeMatch>\n"
+		"    <d:Types>dn:NetworkVideoTransmitter</d:Types>\n"
+		"    <d:Scopes>onvif://www.onvif.org/name/Cam01</d:Scopes>\n"
+		"    <d:XAddrs>http://127.0.0.1:1/onvif/device_service</d:XAddrs>\n"
+		"   </d:ProbeMatch>\n"
+		"  </d:ProbeMatches>\n"
+		" </soap:Body>\n"
+		"</soap:Envelope>";
+
+	obs_onvif::discovery::HandleDiscoveryDatagram(envelope);
+	const auto pending = obs_onvif::discovery::PendingContacts();
+	bool found = false;
+	for (const auto &p : pending)
+		if (p.xaddr.find("127.0.0.1:1") != std::string::npos)
+			found = true;
+	CHECK(found);
+	CHECK(!pending.empty());
+	if (found) {
+		for (const auto &p : pending)
+			if (p.xaddr.find("127.0.0.1:1") != std::string::npos)
+				CHECK(!p.reason.empty());
+	}
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 6) {

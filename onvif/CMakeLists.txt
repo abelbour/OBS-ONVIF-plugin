@@ -17,4 +17,4 @@ target_include_directories(onvif_core PUBLIC
 	"${CMAKE_CURRENT_SOURCE_DIR}/../third_party"
 )
 
-target_link_libraries(onvif_core PUBLIC bcrypt tinyxml2_lib winhttp ws2_32)
+target_link_libraries(onvif_core PUBLIC bcrypt tinyxml2_lib winhttp ws2_32 iphlpapi)

@@ -158,8 +158,15 @@ public:
 		buttons->addWidget(remove);
 		buttons->addStretch();
 
+		unresolved_ = new QLabel(this);
+		unresolved_->setWordWrap(true);
+		unresolved_->setTextInteractionFlags(
+			Qt::TextSelectableByMouse);
+		unresolved_->setVisible(false);
+
 		auto *layout = new QVBoxLayout(this);
 		layout->addWidget(table_);
+		layout->addWidget(unresolved_);
 		layout->addLayout(buttons);
 
 		Refresh();
@@ -191,6 +198,22 @@ private:
 		}
 		if (abi->release_camera_list)
 			abi->release_camera_list(cams);
+
+		// Surface advertised-but-unresolvable devices (auth required /
+		// unreachable) so multicast replies are never silently dropped.
+		const auto pending =
+			obs_onvif::discovery::PendingContacts();
+		if (pending.empty()) {
+			unresolved_->setVisible(false);
+		} else {
+			QString text = String("Dock.Cameras.Unresolved");
+			for (const auto &p : pending) {
+				text += "\n  " + FromUtf8(p.xaddr) + " — " +
+					FromUtf8(p.reason);
+			}
+			unresolved_->setText(text);
+			unresolved_->setVisible(true);
+		}
 	}
 
 	// Manual add-by-IP fallback (M5d): prompts for host/port/credentials,
@@ -272,6 +295,7 @@ private:
 	}
 
 	QTableWidget *table_;
+	QLabel *unresolved_;
 };
 
 // -- Sources tab -------------------------------------------------------------

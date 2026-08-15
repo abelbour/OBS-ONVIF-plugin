@@ -7,6 +7,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mstcpip.h>
+#include <iphlpapi.h>
 
 #include "xml.h"
 
@@ -62,10 +63,69 @@ int FamilyForHost(const std::string &host)
 // IPv4 addresses of up, multicast-capable, non-loopback interfaces. The probe
 // is sent on each so cameras are reached regardless of which adapter is the
 // OS default route (VPNs / virtual adapters frequently hijack it).
-std::vector<uint32_t> MulticastInterfaces()
+//
+// Uses GetAdaptersAddresses (modern, reliable on Windows 10+) with a fallback
+// to the deprecated SIO_GET_INTERFACE_LIST when the modern path yields nothing.
+std::vector<UdpIface> MulticastInterfaces()
 {
 	EnsureWinsock();
-	std::vector<uint32_t> out;
+	std::vector<UdpIface> out;
+
+	// Modern enumeration: interface index + IPv4 unicast addresses, skipping
+	// tunnel/loopback adapters and any that report IP_ADAPTER_NO_MULTICAST.
+	ULONG size = 16384;
+	for (;;) {
+		std::vector<BYTE> buf(size);
+		const ULONG rc = GetAdaptersAddresses(
+			AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+				 GAA_FLAG_SKIP_DNS_SERVER,
+			nullptr, reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buf.data()),
+			&size);
+		if (rc == ERROR_BUFFER_OVERFLOW)
+			continue;
+		if (rc != ERROR_SUCCESS)
+			break;
+		for (const IP_ADAPTER_ADDRESSES *a =
+			     reinterpret_cast<const IP_ADAPTER_ADDRESSES *>(
+				     buf.data());
+		     a; a = a->Next) {
+			if (a->OperStatus != IfOperStatusUp ||
+			    a->IfType == IF_TYPE_SOFTWARE_LOOPBACK ||
+			    (a->Flags & IP_ADAPTER_NO_MULTICAST))
+				continue;
+			for (const IP_ADAPTER_UNICAST_ADDRESS *u =
+				     a->FirstUnicastAddress;
+			     u; u = u->Next) {
+				if (u->Address.lpSockaddr->sa_family != AF_INET)
+					continue;
+				const sockaddr_in *sin =
+					reinterpret_cast<const sockaddr_in *>(
+						u->Address.lpSockaddr);
+				UdpIface i;
+				i.addr = sin->sin_addr.s_addr;
+				i.ifindex = a->IfIndex;
+				if (a->FriendlyName) {
+					const int wlen = WideCharToMultiByte(
+						CP_UTF8, 0, a->FriendlyName, -1,
+						nullptr, 0, nullptr, nullptr);
+					i.name.resize(wlen > 0 ? (size_t)wlen : 0);
+					if (wlen > 0)
+						WideCharToMultiByte(
+							CP_UTF8, 0,
+							a->FriendlyName, -1,
+							&i.name[0], wlen, nullptr,
+							nullptr);
+				}
+				out.push_back(std::move(i));
+				break; // one IPv4 per adapter is enough
+			}
+		}
+		break;
+	}
+	if (!out.empty())
+		return out;
+
+	// Legacy fallback (rare): SIO_GET_INTERFACE_LIST on a bound-less socket.
 	SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (s == INVALID_SOCKET)
 		return out;
@@ -74,13 +134,17 @@ std::vector<uint32_t> MulticastInterfaces()
 	if (WSAIoctl(s, SIO_GET_INTERFACE_LIST, nullptr, 0, infos,
 		     sizeof infos, &bytes, nullptr, nullptr) == 0) {
 		const size_t n = bytes / sizeof(INTERFACE_INFO);
-		for (size_t i = 0; i < n; ++i) {
+		for (size_t j = 0; j < n; ++j) {
 			const sockaddr_in *addr = reinterpret_cast<const sockaddr_in *>(
-				&infos[i].iiAddress);
-			const ULONG flags = infos[i].iiFlags;
+				&infos[j].iiAddress);
+			const ULONG flags = infos[j].iiFlags;
 			if ((flags & IFF_UP) && (flags & IFF_MULTICAST) &&
-			    !(flags & IFF_LOOPBACK))
-				out.push_back(addr->sin_addr.s_addr);
+			    !(flags & IFF_LOOPBACK)) {
+				UdpIface i;
+				i.addr = addr->sin_addr.s_addr;
+				i.name = "legacy";
+				out.push_back(std::move(i));
+			}
 		}
 	}
 	closesocket(s);
@@ -233,7 +297,7 @@ intptr_t OpenUdpSocket(uint16_t bindPort, bool joinMulticast, bool reuseAddr)
 
 	if (joinMulticast) {
 		const in_addr group = DiscoveryGroupAddr();
-		const std::vector<uint32_t> ifaces = MulticastInterfaces();
+		const std::vector<UdpIface> ifaces = MulticastInterfaces();
 		if (ifaces.empty()) {
 			ip_mreq mreq{};
 			mreq.imr_multiaddr = group;
@@ -241,10 +305,10 @@ intptr_t OpenUdpSocket(uint16_t bindPort, bool joinMulticast, bool reuseAddr)
 			setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
 				   (const char *)&mreq, sizeof mreq);
 		} else {
-			for (uint32_t a : ifaces) {
+			for (const UdpIface &i : ifaces) {
 				ip_mreq mreq{};
 				mreq.imr_multiaddr = group;
-				mreq.imr_interface.s_addr = a;
+				mreq.imr_interface.s_addr = i.addr;
 				setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
 					   (const char *)&mreq, sizeof mreq);
 			}
@@ -304,15 +368,15 @@ long SendProbeAll(intptr_t sock, const std::string &messageId)
 	// multicast interface; some cameras only answer one of the two.
 	const std::string v1 = BuildProbe(messageId);
 	const std::string v11 = BuildProbeV11(messageId);
-	const std::vector<uint32_t> ifaces = MulticastInterfaces();
+	const std::vector<UdpIface> ifaces = MulticastInterfaces();
 	if (ifaces.empty()) {
 		const long a = SendUdp(sock, v1, kDiscoveryGroup, kDiscoveryPort);
 		const long b = SendUdp(sock, v11, kDiscoveryGroup, kDiscoveryPort);
 		return (a > 0 ? a : 0) + (b > 0 ? b : 0);
 	}
 	long total = 0;
-	for (uint32_t iface : ifaces) {
-		const DWORD addr = iface;
+	for (const UdpIface &iface : ifaces) {
+		const DWORD addr = iface.addr;
 		setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_IF,
 			   (const char *)&addr, sizeof addr);
 		for (const std::string &payload : {v1, v11}) {
@@ -323,6 +387,21 @@ long SendProbeAll(intptr_t sock, const std::string &messageId)
 		}
 	}
 	return total;
+}
+
+std::string MulticastInterfaceSummary()
+{
+	char addr[INET_ADDRSTRLEN];
+	std::string out;
+	const std::vector<UdpIface> ifaces = MulticastInterfaces();
+	out += std::to_string(ifaces.size()) +
+	       " multicast interface(s)";
+	for (const UdpIface &i : ifaces) {
+		inet_ntop(AF_INET, &i.addr, addr, sizeof addr);
+		out += "\n  " + std::string(addr) + " (idx " +
+		       std::to_string(i.ifindex) + ") " + i.name;
+	}
+	return out;
 }
 
 long RecvUdp(intptr_t sock, std::string &out, unsigned timeoutMs)

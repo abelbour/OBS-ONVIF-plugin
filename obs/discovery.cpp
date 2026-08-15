@@ -142,6 +142,14 @@ std::atomic<unsigned> &LastParseCount()
 	return v;
 }
 
+// Devices advertised but not yet resolvable (auth required, no identity, or
+// unreachable). Keyed by the first advertised XAddr.
+std::map<std::string, PendingContact> &Pending()
+{
+	static std::map<std::string, PendingContact> p;
+	return p;
+}
+
 uint64_t NowMs()
 {
 	return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -220,6 +228,7 @@ bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out,
 	if (dev.xaddrs.empty()) {
 		if (failureReason)
 			*failureReason = "no device address";
+		LogLine("resolve skipped: advertised device has no address");
 		return false;
 	}
 	const std::string xaddr = dev.xaddrs[0];
@@ -239,6 +248,8 @@ bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out,
 		if (failureReason)
 			*failureReason = std::string("GetDeviceInformation: ") +
 					 e.what();
+		LogLine("resolve " + xaddr + " failed: GetDeviceInformation: " +
+			e.what());
 		return false;
 	}
 
@@ -248,8 +259,11 @@ bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out,
 	id.scopes = dev.scopes;
 	id.uuid = dev.uuid;
 	const std::string fingerprint = BuildFingerprint(id);
-	if (fingerprint.empty())
+	if (fingerprint.empty()) {
+		LogLine("resolve " + xaddr +
+			" failed: no stable identity (serial/MAC/hardware)");
 		return false;
+	}
 
 	out.fingerprint = fingerprint;
 	out.display_name = info.model.empty() ? info.manufacturer : info.model;
@@ -303,6 +317,32 @@ std::string ScopeMacFingerprint(const std::string &scopes)
 {
 	const std::string mac = ParseScopeMac(scopes);
 	return mac.empty() ? std::string() : "mac:" + mac;
+}
+
+// Records an unresolved advertised device so discovery failures stay visible
+// instead of silently dropping the camera. Entries are replaced on later
+// attempts and capped to keep a stray flood from growing forever.
+void RecordPending(const std::string &xaddr, const std::string &reason)
+{
+	std::lock_guard<std::mutex> lock(StateMu());
+	PendingContact &p = Pending()[xaddr];
+	p.xaddr = xaddr;
+	p.reason = reason.empty() ? "unreachable" : reason;
+	p.lastAttempt = NowMs();
+	++p.attempts;
+	if (Pending().size() > 64) { // evict the oldest entry
+		auto oldest = Pending().begin();
+		for (auto it = Pending().begin(); it != Pending().end(); ++it)
+			if (it->second.lastAttempt < oldest->second.lastAttempt)
+				oldest = it;
+		Pending().erase(oldest);
+	}
+}
+
+void ClearPending(const std::string &xaddr)
+{
+	std::lock_guard<std::mutex> lock(StateMu());
+	Pending().erase(xaddr);
 }
 
 // A WS-Discovery Bye: mark the matching known camera offline immediately.
@@ -429,9 +469,15 @@ bool ApplyContact(const ContactInfo &ci)
 
 void ProcessContact(const DiscoveredDevice &dev)
 {
-	ContactInfo ci;
-	if (!ResolveContact(dev, ci))
+	if (dev.xaddrs.empty())
 		return;
+	ContactInfo ci;
+	std::string reason;
+	if (!ResolveContact(dev, ci, nullptr, &reason)) {
+		RecordPending(dev.xaddrs[0], reason);
+		return;
+	}
+	ClearPending(dev.xaddrs[0]);
 	ApplyContact(ci);
 }
 
@@ -649,6 +695,7 @@ bool AddManual(const std::string &xaddr, const std::string &username,
 	store.WriteCredential(Store::CameraCredTarget(ci.fingerprint),
 			      username + ":" + password);
 
+	ClearPending(xaddr);
 	ApplyContact(ci);
 	return true;
 }
@@ -685,6 +732,16 @@ unsigned LastParsedDevices()
 	return LastParseCount();
 }
 
+std::vector<PendingContact> PendingContacts()
+{
+	std::lock_guard<std::mutex> lock(StateMu());
+	std::vector<PendingContact> out;
+	out.reserve(Pending().size());
+	for (const auto &kv : Pending())
+		out.push_back(kv.second);
+	return out;
+}
+
 std::string Diagnostics()
 {
 	std::string out = "loop " + std::string(Running() ? "running" : "stopped");
@@ -697,6 +754,12 @@ std::string Diagnostics()
 	       std::to_string(LastParsedDevices());
 	out += "\ncameras in live table: " +
 	       std::to_string(Snapshot().size());
+	out += "\nmulticast interfaces:\n" + MulticastInterfaceSummary();
+	const auto pending = PendingContacts();
+	out += "\nunresolved contacts: " + std::to_string(pending.size());
+	for (const auto &p : pending)
+		out += "\n  " + p.xaddr + " (" + std::to_string(p.attempts) +
+		       " attempts): " + p.reason;
 	return out;
 }
 
