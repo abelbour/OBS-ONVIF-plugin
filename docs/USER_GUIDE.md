@@ -11,27 +11,28 @@ Requirements: Windows 10+ (x64) and OBS Studio 32.x (Qt6).
 
 ## 1. Installation
 
+The release zip uses OBS's **Windows system plugin layout** — the layout OBS
+actually scans on Windows (`obs-plugins\64bit` + `data\obs-plugins\<name>`).
+
 1. Download the `obs-onvif-<version>-windows-x64.zip` release artifact.
-2. Extract it so the `obs-onvif` folder lands **intact** in one of OBS's plugin
-   directories (pick **one** — do not also drop the DLL elsewhere):
-   - **Per-user (recommended):** `%APPDATA%\obs-studio\plugins\` →
-     `%APPDATA%\obs-studio\plugins\obs-onvif\bin\64bit\obs-onvif.dll` and
-     `%APPDATA%\obs-studio\plugins\obs-onvif\data\locale\en-US.ini`.
-   - **System-wide:** `C:\Program Files\obs-studio\plugins\obs-onvif\` (same
-     `bin\64bit` + `data` structure under the install dir), or the flat layout
-     with the DLL in `C:\Program Files\obs-studio\obs-plugins\64bit\` and the
-     `data` folder in `C:\Program Files\obs-studio\data\obs-plugins\obs-onvif\`.
+2. Extract it **into the OBS install directory** (`C:\Program Files\obs-studio\`
+   by default, or your portable root). The folders merge:
+   - `obs-plugins\64bit\obs-onvif.dll` → `C:\Program Files\obs-studio\obs-plugins\64bit\obs-onvif.dll`
+   - `data\obs-plugins\obs-onvif\locale\en-US.ini` → `C:\Program Files\obs-studio\data\obs-plugins\obs-onvif\locale\en-US.ini`
 3. (Re)start OBS. A **Tools → ONVIF Control** menu item appears.
 
-> **Troubleshooting — raw keys like `Dock.MenuItem` in the UI:** that means OBS
-> could not load the plugin's locale file. OBS derives the plugin's data
-> directory from the DLL's install location, so a misplaced install (e.g. the
-> DLL copied into `obs-plugins\64bit` without its matching `data` folder, or a
-> second copy of the DLL elsewhere) leaves the locale unreadable. Check the OBS
-> log (Help → Log Files → Show Log Files) for
-> `Failed to load 'en-US' text for module: 'obs-onvif.dll'` and the plugin's
-> own startup line `obs-onvif data dir: ... locale file: ... (OK|MISSING)`, then
-> fix the install layout above.
+> **Note:** `%APPDATA%\obs-studio\plugins\` is **not** scanned by OBS on Windows
+> for this plugin — use the system layout above.
+
+> **Troubleshooting — raw keys like `Dock.MenuItem`, or nothing in the Tools
+> menu:** OBS derives the plugin's data directory from the DLL's install
+> location. A misplaced install (DLL in `obs-plugins\64bit` without its
+> matching `data\obs-plugins\obs-onvif\` folder, a stale second copy, or the
+> DLL only under `%APPDATA%\obs-studio\plugins`) leaves the locale unreadable
+> or the plugin unloaded. Check the OBS log (Help → Log Files → Show Log Files)
+> for `Failed to load 'en-US' text for module: 'obs-onvif.dll'` and the
+> plugin's own startup line `obs-onvif data dir: ... locale file: ... (OK|MISSING)`,
+> then fix the layout above.
 
 Config data is stored under
 `%APPDATA%\obs-studio\plugin_config\obs-onvif\`. Camera passwords are stored in

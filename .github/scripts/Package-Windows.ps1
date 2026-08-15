@@ -58,23 +58,45 @@ function Package {
 
     Remove-Item @RemoveArgs
 
-    # Bundle license, third-party notices, README, and the user guide INSIDE the
-    # plugin folder so extracting the zip into %APPDATA%\obs-studio\plugins\
-    # keeps everything under plugins\obs-onvif\ (no stray files in plugins\).
-    foreach ( $Doc in @( 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.md' ) ) {
-        Copy-Item -Path "${ProjectRoot}/${Doc}" -Destination "${ProjectRoot}/release/${Configuration}/obs-onvif/" -Force
+    # The zip targets the Windows SYSTEM plugin layout — the layout OBS
+    # actually scans (obs-plugins\64bit + data\obs-plugins\<name>). Extract
+    # into C:\Program Files\obs-studio\ (or the portable root) and the folders
+    # merge: DLL under obs-plugins\64bit\, locale under
+    # data\obs-plugins\obs-onvif\locale\.
+    $Staging = "${ProjectRoot}/release/staging-${Target}"
+    Remove-Item -Recurse -Force $Staging -ErrorAction SilentlyContinue
+
+    $BinSrc = "${ProjectRoot}/release/${Configuration}/obs-onvif/bin/64bit"
+    New-Item -ItemType Directory -Force -Path "${Staging}/obs-plugins/64bit" | Out-Null
+    Copy-Item -Path "${BinSrc}/obs-onvif.dll" -Destination "${Staging}/obs-plugins/64bit/" -Force
+    if (Test-Path "${BinSrc}/obs-onvif.pdb") {
+        Copy-Item -Path "${BinSrc}/obs-onvif.pdb" -Destination "${Staging}/obs-plugins/64bit/" -Force
     }
-    New-Item -ItemType Directory -Force -Path "${ProjectRoot}/release/${Configuration}/obs-onvif/docs" | Out-Null
-    Copy-Item -Path "${ProjectRoot}/docs/USER_GUIDE.md" -Destination "${ProjectRoot}/release/${Configuration}/obs-onvif/docs/" -Force
+
+    New-Item -ItemType Directory -Force -Path "${Staging}/data/obs-plugins/obs-onvif" | Out-Null
+    Copy-Item -Recurse -Force "${ProjectRoot}/release/${Configuration}/obs-onvif/data/*" `
+        -Destination "${Staging}/data/obs-plugins/obs-onvif/"
+
+    # Public ABI header + docs, bundled under obs-onvif/ (not installed).
+    New-Item -ItemType Directory -Force -Path "${Staging}/obs-onvif/docs" | Out-Null
+    if (Test-Path "${ProjectRoot}/release/${Configuration}/obs-onvif/obs-onvif.h") {
+        Copy-Item -Path "${ProjectRoot}/release/${Configuration}/obs-onvif/obs-onvif.h" `
+            -Destination "${Staging}/obs-onvif/" -Force
+    }
+    foreach ( $Doc in @( 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.md' ) ) {
+        Copy-Item -Path "${ProjectRoot}/${Doc}" -Destination "${Staging}/obs-onvif/" -Force
+    }
+    Copy-Item -Path "${ProjectRoot}/docs/USER_GUIDE.md" -Destination "${Staging}/obs-onvif/docs/" -Force
 
     Log-Group "Archiving ${ProductName}..."
     $CompressArgs = @{
-        Path = (Get-ChildItem -Path "${ProjectRoot}/release/${Configuration}" -Exclude "${OutputName}*.*")
+        Path = (Get-ChildItem -Path $Staging)
         CompressionLevel = 'Optimal'
         DestinationPath = "${ProjectRoot}/release/${OutputName}.zip"
         Verbose = ($Env:CI -ne $null)
     }
     Compress-Archive -Force @CompressArgs
+    Remove-Item -Recurse -Force $Staging -ErrorAction SilentlyContinue
     Log-Group
 }
 

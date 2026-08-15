@@ -118,6 +118,20 @@ jobs:
           $zip = Get-ChildItem 'release/obs-onvif-*-windows-x64.zip' | Select-Object -First 1
           if (-not $zip) { Write-Error 'No plugin zip produced'; exit 1 }
           Write-Host "ZIP: $($zip.FullName) ($($zip.Length) bytes)"
+          # The zip must use the Windows SYSTEM layout that OBS scans.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          $names = @($z.Entries | ForEach-Object { $_.FullName })
+          $z.Dispose()
+          foreach ($need in @('obs-plugins/64bit/obs-onvif.dll',
+                              'data/obs-plugins/obs-onvif/locale/en-US.ini',
+                              'obs-onvif/obs-onvif.h')) {
+            if ($names -notcontains $need) {
+              Write-Error "Zip missing system-layout entry: $need"
+              exit 1
+            }
+            Write-Host "ZIP OK: $need"
+          }
 
       - name: Upload artifact 📡
         uses: actions/upload-artifact@v4
