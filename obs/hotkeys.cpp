@@ -57,14 +57,6 @@ template <typename Fn> void FireAsync(Fn &&fn)
 	}).detach();
 }
 
-const char *PresetTokenFor(int n)
-{
-	static const char *kToken[] = {"preset1", "preset2", "preset3",
-				       "preset4", "preset5", "preset6",
-				       "preset7", "preset8", "preset9"};
-	return kToken[n - 1];
-}
-
 void OnPresetHotkey(void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 {
 	if (!pressed)
@@ -72,8 +64,24 @@ void OnPresetHotkey(void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 	const int n = (int)(intptr_t)data;
 	FireAsync([n](obs_cast_abi_t *abi) {
 		std::string cam;
-		if (FirstOnlineCameraId(cam))
-			abi->goto_preset(cam.c_str(), PresetTokenFor(n));
+		if (!FirstOnlineCameraId(cam))
+			return;
+		/* Resolve the Nth preset from the camera's actual preset list
+		 * (tokens are device-assigned, never "presetN"). A blocking
+		 * SOAP call in the worker thread, matching the dock. */
+		const char **names = nullptr;
+		const char **tokens = nullptr;
+		int count = 0;
+		if (abi->list_presets(cam.c_str(), &names, &tokens, &count) !=
+			    0 ||
+		    n < 1 || n > count) {
+			if (abi->release_presets)
+				abi->release_presets(names, tokens, count);
+			return;
+		}
+		abi->goto_preset(cam.c_str(), tokens[n - 1]);
+		if (abi->release_presets)
+			abi->release_presets(names, tokens, count);
 	});
 }
 

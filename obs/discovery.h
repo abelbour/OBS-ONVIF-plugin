@@ -78,7 +78,8 @@ bool AddManual(const std::string &xaddr, const std::string &username,
 	       const std::string &password, std::string &err);
 
 // Removes a camera (by fingerprint id) from the live table, the persisted
-// store, and the Credential Vault.
+// store, and the Credential Vault. Returns false + `err` when no camera with
+// that id exists.
 bool RemoveManual(const std::string &cameraId, std::string &err);
 
 } // namespace obs_onvif::discovery

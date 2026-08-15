@@ -27,6 +27,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QMessageBox>
 #include <QObject>
 #include <QPushButton>
 #include <QSpinBox>
@@ -228,9 +229,24 @@ private:
 		const std::string p = pass->text().toStdString();
 		std::thread([xaddr, u, p, this]() {
 			std::string err;
-			obs_onvif::discovery::AddManual(xaddr, u, p, err);
-			QMetaObject::invokeMethod(this, [this]() { Refresh(); },
-						  Qt::QueuedConnection);
+			const bool ok =
+				obs_onvif::discovery::AddManual(xaddr, u, p, err);
+			QMetaObject::invokeMethod(
+				this,
+				[this, ok, err]() {
+					Refresh();
+					if (!ok)
+						QMessageBox::warning(
+							this,
+							String("Dock.Camera.Add"),
+							FromUtf8(
+								err.empty()
+									? std::string(
+										  "Failed to add "
+										  "camera.")
+									: err));
+				},
+				Qt::QueuedConnection);
 		}).detach();
 	}
 

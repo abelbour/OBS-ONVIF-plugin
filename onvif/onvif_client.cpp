@@ -1231,7 +1231,13 @@ std::vector<OSDConfig> OnvifClient::GetOSDs(
 		c.token = Attr(osd, "token");
 		c.text =
 			xml::DescendantText(osd, {"TextString", "PlainText"});
-		c.enabled = true; // present OSDs are enabled
+		// Absent <Enabled> (some cameras omit it) means "shown"; present
+		// entries parse the actual boolean.
+		const std::string enabled =
+			xml::DescendantText(osd, {"Enabled"});
+		c.enabled = enabled.empty()
+			     ? true
+			     : (enabled == "true" || enabled == "1");
 		out.push_back(std::move(c));
 	}
 	return out;

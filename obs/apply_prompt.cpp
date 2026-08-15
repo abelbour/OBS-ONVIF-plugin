@@ -19,19 +19,30 @@
 
 #include <obs-module.h>
 
+#include "camera.h"
 #include "obs_apply.h"
+#include "store.h"
 
 namespace obs_onvif::glue {
 
 namespace {
 
-// Matches AppConfig::prompt_timeout_s (30) in registry/camera.h.
-constexpr int kPromptTimeoutS = 30;
+// Reads the persisted prompt countdown (Settings → General → prompt timeout);
+// falls back to 30 s when unset/invalid.
+int PromptTimeoutS()
+{
+	registry::Store store(ConfigDir());
+	registry::AppConfig cfg;
+	if (store.LoadAppConfig(cfg) && cfg.prompt_timeout_s > 0)
+		return cfg.prompt_timeout_s;
+	return 30;
+}
 
 class ApplyPromptDialog : public QDialog {
 public:
 	explicit ApplyPromptDialog(QWidget *parent = nullptr)
-		: QDialog(parent), remaining_(kPromptTimeoutS), timer_(nullptr)
+		: QDialog(parent), remaining_(PromptTimeoutS()),
+		  timer_(nullptr)
 	{
 		setModal(true);
 		setAttribute(Qt::WA_DeleteOnClose);

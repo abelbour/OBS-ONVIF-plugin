@@ -115,6 +115,14 @@ unsigned &SoapTimeoutMs()
 	return t;
 }
 
+// Settings → General "hello listener" toggle. When off, unsolicited multicast
+// Hello/Bye datagrams are ignored (probe traffic still processed).
+bool &HelloEnabled()
+{
+	static bool e = true;
+	return e;
+}
+
 uint64_t NowMs()
 {
 	return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -180,12 +188,18 @@ void ProcessContact(const DiscoveredDevice &dev);
 // Resolves a discovery contact: identity (fingerprint) + stream URI. Returns
 // false when the device cannot be reached or has no identifiable fingerprint.
 // `initialCreds` (manual add-by-IP) supplies the first GetDeviceInformation
-// attempt; otherwise the default credentials resolver is used.
+// attempt; otherwise the default credentials resolver is used. On failure,
+// `failureReason` (optional) receives the underlying error for surfacing to
+// the user.
 bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out,
-		    const registry::CameraCreds *initialCreds = nullptr)
+		    const registry::CameraCreds *initialCreds = nullptr,
+		    std::string *failureReason = nullptr)
 {
-	if (dev.xaddrs.empty())
+	if (dev.xaddrs.empty()) {
+		if (failureReason)
+			*failureReason = "no device address";
 		return false;
+	}
 	const std::string xaddr = dev.xaddrs[0];
 
 	const registry::CameraCreds defaultCreds =
@@ -199,7 +213,10 @@ bool ResolveContact(const DiscoveredDevice &dev, ContactInfo &out,
 	DeviceInfo info;
 	try {
 		info = client->GetDeviceInformation();
-	} catch (const std::exception &) {
+	} catch (const std::exception &e) {
+		if (failureReason)
+			*failureReason = std::string("GetDeviceInformation: ") +
+					 e.what();
 		return false;
 	}
 
@@ -488,6 +505,7 @@ void Configure(const std::string &configDir, CredsFn creds, MovedFn onMoved,
 			HeartbeatS() = (unsigned)cfg.discovery_interval_s;
 		if (cfg.soap_timeout_s > 0)
 			SoapTimeoutMs() = (unsigned)cfg.soap_timeout_s * 1000;
+		HelloEnabled() = cfg.hello_listener_enabled;
 	}
 
 	Configured().store(true);
@@ -559,9 +577,13 @@ void HandleDiscoveryDatagram(const std::string &xml)
 	for (const auto &dev : devs) {
 		switch (dev.type) {
 		case DiscoveryMsgType::Bye:
+			if (!HelloEnabled())
+				continue;
 			ProcessBye(dev);
 			break;
 		case DiscoveryMsgType::Hello:
+			if (!HelloEnabled())
+				continue;
 			ProcessHello(dev);
 			break;
 		default:
@@ -580,8 +602,11 @@ bool AddManual(const std::string &xaddr, const std::string &username,
 
 	registry::CameraCreds creds{username, password};
 	ContactInfo ci;
-	if (!ResolveContact(dev, ci, &creds)) {
-		err = "cannot reach an ONVIF camera at " + xaddr;
+	std::string reason;
+	if (!ResolveContact(dev, ci, &creds, &reason)) {
+		err = reason.empty() ? "cannot reach an ONVIF camera at " + xaddr
+				     : reason;
+		LogLine("AddManual(" + xaddr + ") failed: " + err);
 		return false;
 	}
 
@@ -606,9 +631,10 @@ bool RemoveManual(const std::string &cameraId, std::string &err)
 		PersistAll();
 		Store store(ConfigDir());
 		store.DeleteCredential(Store::CameraCredTarget(cameraId));
+		return true;
 	}
-	(void)err;
-	return true;
+	err = "camera '" + cameraId + "' not found";
+	return false;
 }
 
 } // namespace obs_onvif::discovery
