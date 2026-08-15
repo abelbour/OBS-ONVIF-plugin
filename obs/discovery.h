@@ -31,16 +31,25 @@ using MovedFn = std::function<void(const std::string &cameraId,
 				   const std::string &newStreamUri,
 				   const std::string &credentials)>;
 
+// Optional diagnostic logger. The plugin wires this to obs_log; the OBS-free
+// live tests pass a no-op (discovery.cpp must not link libobs).
+using LogFn = std::function<void(const std::string &line)>;
+
 // Configures the loop: store root, credentials resolver, move callback, and
 // discovery/soap timeouts from the persisted AppConfig. Seeds the live table
 // from the persisted cameras (offline until re-seen). Safe to call once.
-void Configure(const std::string &configDir, CredsFn creds, MovedFn onMoved);
+void Configure(const std::string &configDir, CredsFn creds, MovedFn onMoved,
+	       LogFn log = LogFn());
 
 // Starts the background discovery loop. No-op if already running.
 void Start();
 
 // Stops the loop and joins its thread.
 void Stop();
+
+// Signals the background loop to send an immediate multicast Probe (the dock's
+// Refresh/Scan button). Thread-safe; no-op if the loop isn't running.
+void RequestScan();
 
 // True while the loop is (or was) configured and not yet stopped.
 bool Running();

@@ -91,6 +91,18 @@ MovedFn &OnMoved()
 	return f;
 }
 
+LogFn &Log()
+{
+	static LogFn f;
+	return f;
+}
+
+void LogLine(const std::string &line)
+{
+	if (Log())
+		Log()(line);
+}
+
 unsigned &HeartbeatS()
 {
 	static unsigned s = 60;
@@ -363,6 +375,11 @@ bool ApplyContact(const ContactInfo &ci)
 
 	if (isNew || moved)
 		PersistAll();
+	if (isNew)
+		LogLine("registered camera " + ci.fingerprint + " at " +
+			ci.xaddr);
+	else if (moved)
+		LogLine("camera " + ci.fingerprint + " changed to " + ci.xaddr);
 	if (moved && OnMoved())
 		OnMoved()(ci.fingerprint, ci.stream_uri, ci.credentials);
 	return isNew || moved;
@@ -386,19 +403,37 @@ void SweepStale()
 	}
 }
 
+std::atomic<bool> &ScanRequested()
+{
+	static std::atomic<bool> f(false);
+	return f;
+}
+
+void RequestScan()
+{
+	ScanRequested().store(true);
+}
+
 void LoopBody()
 {
 	SeedFromStore();
 
 	intptr_t sock = OpenUdpSocket(kDiscoveryPort, /*joinMulticast=*/true,
 				     /*reuseAddr=*/true);
-	if (sock == -1)
+	if (sock == -1) {
+		LogLine("UDP socket open FAILED (is port 3702 in use?)");
 		return;
+	}
+	LogLine("UDP socket open OK on 239.255.255.250:3702");
 
-	SendUdp(sock, BuildProbe("urn:uuid:obs-onvif-start"), kDiscoveryGroup,
-		kDiscoveryPort);
+	const long sent0 =
+		SendUdp(sock, BuildProbe("urn:uuid:obs-onvif-start"),
+			kDiscoveryGroup, kDiscoveryPort);
+	LogLine("startup Probe sent (" + std::to_string(sent0) + " bytes)");
 
 	uint64_t nextHeartbeat = NowMs() + (uint64_t)HeartbeatS() * 1000;
+	uint64_t nextRetry = NowMs() + 3000;
+	uint64_t retries = 0;
 	while (!StopFlag().load()) {
 		// Drain the pending datagram batch (DHCP-sack: a Hello/Bye burst
 		// during a network event is cheap — no SOAP — but must not be
@@ -411,13 +446,33 @@ void LoopBody()
 				RecvUdp(sock, msg, batch == 0 ? 500 : 0);
 			if (n <= 0)
 				break;
+			LogLine("received " + std::to_string(n) + "-byte datagram");
 			HandleDiscoveryDatagram(msg);
 			if (++batch >= 128)
 				break;
 		}
+		if (NowMs() >= nextRetry && retries < 3) {
+			// Re-probe a few times early on so a dropped startup
+			// probe can't leave the table empty for a whole heartbeat.
+			const std::string id = "urn:uuid:obs-onvif-retry" +
+					       std::to_string(retries++);
+			const long s = SendUdp(sock, BuildProbe(id),
+					       kDiscoveryGroup, kDiscoveryPort);
+			LogLine("retry Probe #" + std::to_string(retries) +
+				" sent (" + std::to_string(s) + " bytes)");
+			nextRetry = NowMs() + 3000;
+		}
+		if (ScanRequested().exchange(false)) {
+			const long s = SendUdp(sock,
+					       BuildProbe("urn:uuid:obs-onvif-scan"),
+					       kDiscoveryGroup, kDiscoveryPort);
+			LogLine("manual Scan Probe sent (" + std::to_string(s) +
+				" bytes)");
+		}
 		if (NowMs() >= nextHeartbeat) {
 			SendUdp(sock, BuildProbe("urn:uuid:obs-onvif-heartbeat"),
 				kDiscoveryGroup, kDiscoveryPort);
+			LogLine("heartbeat Probe sent");
 			SweepStale();
 			nextHeartbeat =
 				NowMs() + (uint64_t)HeartbeatS() * 1000;
@@ -428,11 +483,13 @@ void LoopBody()
 
 } // namespace
 
-void Configure(const std::string &configDir, CredsFn creds, MovedFn onMoved)
+void Configure(const std::string &configDir, CredsFn creds, MovedFn onMoved,
+	       LogFn log)
 {
 	ConfigDir() = configDir;
 	Creds() = std::move(creds);
 	OnMoved() = std::move(onMoved);
+	Log() = std::move(log);
 
 	Store store(configDir);
 	AppConfig cfg;

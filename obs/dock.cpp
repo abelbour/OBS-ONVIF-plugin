@@ -140,7 +140,10 @@ public:
 		auto *add = new QPushButton(String("Dock.Camera.Add"), this);
 		auto *remove = new QPushButton(String("Dock.Camera.Remove"), this);
 		connect(refresh, &QPushButton::clicked, this,
-			&CamerasWidget::Refresh);
+			[this]() {
+				obs_onvif::discovery::RequestScan();
+				Refresh();
+			});
 		connect(add, &QPushButton::clicked, this,
 			&CamerasWidget::AddByIp);
 		connect(remove, &QPushButton::clicked, this,

@@ -122,8 +122,12 @@ void OnDiscoveryMoved(const std::string &camera_id,
 
 void StartDiscovery()
 {
-	obs_onvif::discovery::Configure(ConfigDir(), LoadCredentials,
-					 OnDiscoveryMoved);
+	obs_onvif::discovery::Configure(
+		ConfigDir(), LoadCredentials, OnDiscoveryMoved,
+		[](const std::string &line) {
+			obs_log(LOG_INFO, "[obs-onvif] discovery: %s",
+				line.c_str());
+		});
 	obs_onvif::discovery::Start();
 }
 
