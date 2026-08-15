@@ -30,7 +30,6 @@
 #include <plugin-support.h>
 
 #include <cstdlib>
-#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -315,9 +314,9 @@ private:
 		soapTimeout_->setValue(cfg.soap_timeout_s);
 		helloEnabled_->setChecked(cfg.hello_listener_enabled);
 		probeTimeout_->setValue(cfg.discovery_probe_timeout_s);
-		method_->setCurrentIndex(
-			std::max(0, method_->findData(
-					  FromUtf8(cfg.discovery_method))));
+		const int idx =
+			method_->findData(FromUtf8(cfg.discovery_method));
+		method_->setCurrentIndex(idx > 0 ? idx : 0);
 		UpdateFirewallHint();
 		keepalive_->setChecked(cfg.soap_keepalive);
 		authCache_->setChecked(cfg.ptz_auth_cache);
