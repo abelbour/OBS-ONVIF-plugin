@@ -409,11 +409,6 @@ std::atomic<bool> &ScanRequested()
 	return f;
 }
 
-void RequestScan()
-{
-	ScanRequested().store(true);
-}
-
 void LoopBody()
 {
 	SeedFromStore();
@@ -519,6 +514,11 @@ void Stop()
 	StopFlag().store(true);
 	if (LoopThread().joinable())
 		LoopThread().join();
+}
+
+void RequestScan()
+{
+	ScanRequested().store(true);
 }
 
 bool Running()
